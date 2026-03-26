@@ -1,0 +1,49 @@
+﻿<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <DefineConstants>TRACE</DefineConstants> <!-- no DEBUG, no DISABLED -->
+    <UserSecretsId>aspnet-WebApi-6B13F405-CC60-4ECA-B811-B71B02197BD2</UserSecretsId>
+    <WebProject_DirectoryAccessLevelKey>0</WebProject_DirectoryAccessLevelKey>
+    <DockerDefaultTargetOS>Linux</DockerDefaultTargetOS>
+  </PropertyGroup>
+  <ItemGroup>
+    <Content Remove="nlog.config" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Include="nlog.config">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+  <ItemGroup>
+    <PackageReference Include="AWS.Logger.NLog" Version="4.0.0" />
+    <PackageReference Include="AWSSDK.ElasticBeanstalk" Version="4.0.1.3" />
+    <PackageReference Include="AutoMapper.Extensions.Microsoft.DependencyInjection" Version="12.0.1" />
+    <PackageReference Include="MediatR" Version="13.0.0" />
+    <PackageReference Include="Microsoft.AspNetCore.Authentication.Google" Version="8.0.1" />
+    <PackageReference Include="Microsoft.AspNetCore.SignalR.Common" Version="8.0.1" />
+    <PackageReference Include="Microsoft.EntityFrameworkCore.Design" Version="8.0.1">
+      <PrivateAssets>all</PrivateAssets>
+      <IncludeAssets>runtime; build; native; contentfiles; analyzers; buildtransitive</IncludeAssets>
+    </PackageReference>
+    <PackageReference Include="Microsoft.Extensions.Caching.Memory" Version="8.0.1" />
+    <PackageReference Include="Microsoft.Identity.Web" Version="3.14.1" />
+    <PackageReference Include="Microsoft.Identity.Web.UI" Version="3.14.1" />
+    <PackageReference Include="Microsoft.VisualStudio.Azure.Containers.Tools.Targets" Version="1.22.1" />
+    <PackageReference Include="Newtonsoft.Json" Version="13.0.3" />
+    <PackageReference Include="NLog.Database" Version="6.0.3" />
+    <PackageReference Include="NLog.Extensions.Logging" Version="6.0.4" />
+    <PackageReference Include="NLog.Web.AspNetCore" Version="6.0.4" />
+    <PackageReference Include="Npgsql" Version="8.0.7" />
+    <PackageReference Include="Stripe.net" Version="50.0.0" />
+  </ItemGroup>
+  <ItemGroup>
+    <ProjectReference Include="..\Application\Core.Application.csproj" />
+    <ProjectReference Include="..\Dashboard.Application\Dashboard.Application.csproj" />
+    <ProjectReference Include="..\Infrastructure\Core.Infrastructure.csproj" />
+  </ItemGroup>
+  <ItemGroup>
+    <None Update="nlog-config-backup">
+      <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
+    </None>
+  </ItemGroup>
+</Project>

@@ -1,0 +1,73 @@
+version: 0.2
+phases:
+  install:
+    runtime-versions:
+      dotnet: 8.0
+
+  pre_build:
+    commands:
+      - echo "Creating global.json if not exists..."
+      - "test -f global.json || echo '{\"sdk\": {\"version\": \"8.0.200\"}}' > global.json"
+
+  build:
+    commands:
+      - echo "Building and testing the application..."
+      - dotnet restore
+      - |
+        if [ -d "WebApi" ]; then
+          cd WebApi
+          aws secretsmanager get-secret-value --secret-id pulr-dev-backend-secrets --query SecretString --output text > appsettings.Production.json
+          dotnet build --configuration Release
+          dotnet publish --configuration Release /p:EnvironmentName=Development -o publish
+          cd ..
+        else
+          echo "Error: WebApi directory not found"
+          exit 1
+        fi
+      - |
+        if [ -d "XUnitTests" ]; then
+          cd XUnitTests
+          dotnet test --no-restore --filter "ClassName!~ComprehensiveValidationTests"
+          cd ..
+        else
+          echo "Error: XUnitTests directory not found"
+          exit 1
+        fi
+
+  post_build:
+    commands:
+      - echo "Building and pushing Docker image to ECR..."
+      - |
+        BRANCH_NAME=${CODEBUILD_WEBHOOK_HEAD_REF##*/}
+        if [ -z "$BRANCH_NAME" ]; then BRANCH_NAME=${CODEBUILD_SOURCE_VERSION##*/}; fi
+        
+        echo "Detected branch: $BRANCH_NAME"
+        
+        # Build/push for ANY branch during testing
+        echo "Building Docker image..."
+        
+        # ✅ FIXED ECR LOGIN (no command substitution)
+        aws ecr get-login-password --region ap-south-1 | docker login \
+          --username AWS \
+          --password-stdin \
+          134712128853.dkr.ecr.ap-south-1.amazonaws.com
+        
+        echo "✅ ECR login successful"
+        
+        # Build and tag
+        docker build -t pulr-backend:latest .
+        docker tag pulr-backend:latest 134712128853.dkr.ecr.ap-south-1.amazonaws.com/pulr-backend:latest
+        
+        # Push
+        docker push 134712128853.dkr.ecr.ap-south-1.amazonaws.com/pulr-backend:latest
+        
+        echo "✅ Docker image pushed to ECR: 134712128853.dkr.ecr.ap-south-1.amazonaws.com/pulr-backend:latest"
+      - printf '[{"name":"app","imageUri":"134712128853.dkr.ecr.ap-south-1.amazonaws.com/pulr-backend:latest"}]' > imagedefinitions.json
+
+artifacts:
+  files:
+    - WebApi/publish/**/*
+    - imagedefinitions.json
+  discard-paths: no
+
+

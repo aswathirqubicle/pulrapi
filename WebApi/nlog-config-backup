@@ -1,0 +1,47 @@
+﻿<?xml version="1.0" encoding="utf-8" ?>
+<nlog xmlns="http://www.nlog-project.org/schemas/NLog.xsd"
+    xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+    autoReload="true"
+    throwConfigExceptions="true"
+    internalLogLevel="debug"
+    internalLogFile="c:\temp\internal-nlog.txt">
+
+	<extensions>
+		<add assembly="NLog.Web.AspNetCore"/>
+	</extensions>
+	<targets>
+		<target name="database"
+				xsi:type="Database"
+				dbProvider="Microsoft.Data.SqlClient.SqlConnection, Microsoft.Data.SqlClient"
+				connectionString="${configsetting:item=ConnectionStrings.Pulr}" >
+
+			<commandText>
+
+				INSERT INTO [dbo].[AppLogs]
+				([Application]
+				,[Logged]
+				,[Level]
+				,[Message]
+				,[Logger]
+				,[Callsite]
+				,[Exception])
+				VALUES (@application,@logged, @level, @message, @logger, @callsite, @exception );
+
+			</commandText>
+
+			<parameter name="@application" layout="AspNetCoreNlog" />
+			<parameter name="@level" layout="${level}" />
+			<parameter name="@message" layout="${message}" />
+
+			<parameter name="@logger" layout="${logger}" />
+			<parameter name="@callSite" layout="${callsite:filename=true}" />
+			<parameter name="@exception" layout="${exception:tostring}" />
+			<parameter name="@logged" layout="${date}" dbType="DateTime" />
+		</target>
+	</targets>
+
+	<rules>
+		<logger name="Microsoft.*" minlevel="Info" writeTo="" final="true" />
+		<logger name="*"  minlevel="Info" maxlevel="Fatal" final="true" writeTo="database" />
+	</rules>
+</nlog>

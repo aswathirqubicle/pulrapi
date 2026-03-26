@@ -1,0 +1,32 @@
+[
+  {
+    "Namespace": "aws:elasticbeanstalk:application:environment",
+    "OptionName": "ASPNETCORE_ENVIRONMENT",
+    "Value": "Development"
+  },
+  {
+    "Namespace": "aws:elasticbeanstalk:application:environment",
+    "OptionName": "PORT",
+    "Value": "5000"
+  },
+  {
+    "Namespace": "aws:autoscaling:launchconfiguration",
+    "OptionName": "InstanceType",
+    "Value": "t3.micro"
+  },
+  {
+    "Namespace": "aws:elasticbeanstalk:environment:process:default",
+    "OptionName": "Port",
+    "Value": "5000"
+  },
+  {
+    "Namespace": "aws:autoscaling:launchconfiguration",
+    "OptionName": "IamInstanceProfile",
+    "Value": "aws-elasticbeanstalk-ec2-role"
+  },
+  {
+    "Namespace": "aws:elasticbeanstalk:environment",
+    "OptionName": "EnvironmentType",
+    "Value": "SingleInstance"
+  }
+]
