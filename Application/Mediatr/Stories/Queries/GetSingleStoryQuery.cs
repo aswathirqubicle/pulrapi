@@ -4,6 +4,7 @@ using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using AutoMapper;
+using Core.Application.Exceptions;
 using Core.Application.Interfaces;
 using Core.Application.Models.MediaFiles;
 using Core.Application.Models.Products;
@@ -46,7 +47,7 @@ public class GetSingleStoryQueryHandler : IRequestHandler<GetSingleStoryQuery, P
                 .Include(s => s.StoryLikes)
                 .Include(s => s.MediaFile)
                 .Include(s => s.StoryProductTags).ThenInclude(pt => pt.Product).ThenInclude(p => p.ProductMediaFiles).ThenInclude(pmf => pmf.MediaFile)
-                .Include(s => s.User).ThenInclude(u => u.Profile)
+                .Include(s => s.User).ThenInclude(u => u.Profile).ThenInclude(p => p.ProfileSettings)
                 .Include(s => s.Store)
                 .Include(s => s.SharedPost).ThenInclude(p => p.User).ThenInclude(u => u.Profile)
                 .Include(s => s.SharedPost).ThenInclude(p => p.MediaFile)
@@ -59,6 +60,26 @@ public class GetSingleStoryQueryHandler : IRequestHandler<GetSingleStoryQuery, P
 
             if (story == null)
                 return null;
+
+            // Privacy check: block non-followers from viewing stories of private profiles
+            if (story.Store == null && story.User?.Profile != null)
+            {
+                var ownerProfile = story.User.Profile;
+                bool isPublic = ownerProfile.ProfileSettings == null || ownerProfile.ProfileSettings.IsProfilePublic;
+                if (!isPublic)
+                {
+                    var currentProfileId = currentUser?.Profile?.Id;
+                    bool isOwner = currentProfileId.HasValue && ownerProfile.Id == currentProfileId.Value;
+                    if (!isOwner)
+                    {
+                        bool isFollower = currentProfileId.HasValue &&
+                            await _dbContext.ProfileFollowers.AnyAsync(
+                                pf => pf.ProfileId == ownerProfile.Id && pf.FollowerId == currentProfileId.Value, cancellationToken);
+                        if (!isFollower)
+                            throw new ForbiddenException("This profile is private.");
+                    }
+                }
+            }
 
             var storyResponse = new StoryResponse
             {

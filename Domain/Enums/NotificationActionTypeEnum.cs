@@ -13,5 +13,16 @@ namespace Core.Domain.Enums
         Story = 7,
         FollowRequest = 8,
         FollowRequestAccepted = 9,
+        Collab_invite = 10,
+        Collab_reject = 11,
+        Collab_accept = 12,
+        Collab_review = 13,
+        Collab_feedback = 14,
+        Collab_approved = 15,
+        RefundRequest = 16,
+        RefundApproved = 17,
+        RefundRejected = 18,
+        RefundDisputed = 19,
+        RefundResolved = 20,
     }
 } 

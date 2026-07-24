@@ -50,6 +50,9 @@ namespace Core.Application.Mediatr.Products.Commands
         public List<ProductVariantCreateRequest> ProductVariants { get; set; } = [];
 
         public List<ProductVariantCombinationUpdateRequest> ProductVariantCombinations { get; set; } = [];
+
+        [SafeUid(allowNullValue: true, ErrorMessage = "CollabId contains invalid characters or format.")]
+        public string? CollabId { get; set; }
     }
 
     public class ProductUpdateCommandHandler : IRequestHandler<ProductUpdateCommand, ProductDetailsResponse>
@@ -121,6 +124,10 @@ namespace Core.Application.Mediatr.Products.Commands
                 // Update Type field
                 product.Type = request.Type;
                 product.SellType = request.SellType;
+
+                // Update CollabId if provided
+                if (request.CollabId != null)
+                    product.CollabId = request.CollabId;
 
                 // Validate brand is required when type is "own"
                 if (request.Type == ProductTypeEnum.Own && string.IsNullOrWhiteSpace(request.Brand))
@@ -383,6 +390,7 @@ namespace Core.Application.Mediatr.Products.Commands
                     ProductUrl = product.ProductUrl,
                     Type = product.Type,
                     SellType = product.SellType,
+                    CollabId = product.CollabId,
                     CreatedAt = product.CreatedAt,
                     UpdatedAt = product.UpdatedAt,
                     ProductMediaFiles = product.ProductMediaFiles?.Select(pmf => new MediaFileDetailsResponse

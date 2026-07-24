@@ -638,6 +638,153 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("Disputes");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.EscrowWallet", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("CurrencyId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("LockedBalance")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("decimal(18,2)")
+                        .HasDefaultValue(0m);
+
+                    b.Property<int>("ProfileId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CurrencyId");
+
+                    b.HasIndex("ProfileId");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("EscrowWallets", (string)null);
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.EscrowWalletTransaction", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("Amount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<decimal?>("CreatorAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<string>("CreatorUserId")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime?>("EscrowReleaseAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EscrowWalletId")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<bool>("IsCollabSale")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("OrderId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("OrderProductAffiliateId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal?>("PlatformAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<DateTime?>("ReleasedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("SellerAmount")
+                        .HasColumnType("decimal(18,2)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("StripePaymentIntentId")
+                        .IsRequired()
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("StripeRefundId")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("StripeTransferIdCreator")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<string>("StripeTransferIdSeller")
+                        .HasMaxLength(255)
+                        .HasColumnType("character varying(255)");
+
+                    b.Property<int>("TransactionType")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EscrowWalletId");
+
+                    b.HasIndex("OrderId");
+
+                    b.HasIndex("OrderProductAffiliateId");
+
+                    b.HasIndex("StripePaymentIntentId");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("EscrowWalletTransactions", (string)null);
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.ExchangeRate", b =>
                 {
                     b.Property<int>("Id")
@@ -1143,6 +1290,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<int>("ActorUserId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("Body")
+                        .HasColumnType("text");
+
                     b.Property<string>("CommentText")
                         .HasColumnType("text");
 
@@ -1151,6 +1301,9 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
+
+                    b.Property<int?>("FollowerCount")
+                        .HasColumnType("integer");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -1172,6 +1325,9 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("TargetType")
                         .HasColumnType("integer");
+
+                    b.Property<string>("Title")
+                        .HasColumnType("text");
 
                     b.Property<string>("Uid")
                         .IsRequired()
@@ -1255,6 +1411,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<int?>("BillingDetailsId")
                         .HasColumnType("integer");
 
+                    b.Property<string>("CollabId")
+                        .HasColumnType("text");
+
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
 
@@ -1266,6 +1425,9 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal?>("GrossAmount")
+                        .HasColumnType("numeric");
 
                     b.Property<bool>("IsActive")
                         .HasColumnType("boolean");
@@ -1297,6 +1459,12 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<string>("ShippingProvider")
                         .HasColumnType("text");
 
+                    b.Property<decimal?>("StripeFeeAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<string>("StripePaymentIntentId")
+                        .HasColumnType("text");
+
                     b.Property<string>("StripePaymentMethodId")
                         .HasColumnType("text");
 
@@ -1309,6 +1477,9 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTime>("UpdatedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("VatAmount")
+                        .HasColumnType("numeric");
 
                     b.HasKey("Id");
 
@@ -1327,6 +1498,53 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("Orders");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.OrderItemShippingProof", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("MediaFileId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("OrderProductAffiliateId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaFileId");
+
+                    b.HasIndex("OrderProductAffiliateId");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("OrderItemShippingProofs");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.OrderProductAffiliate", b =>
                 {
                     b.Property<int>("Id")
@@ -1337,6 +1555,12 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<int?>("AffiliateId")
                         .HasColumnType("integer");
+
+                    b.Property<DateTime?>("CheckinPromptSentAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid?>("ColabInviteId")
+                        .HasColumnType("uuid");
 
                     b.Property<DateTime?>("CountdownExpiryDate")
                         .HasColumnType("timestamp with time zone");
@@ -1350,14 +1574,32 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<string>("CreatedBy")
                         .HasColumnType("text");
 
+                    b.Property<string>("CreatorUserId")
+                        .HasColumnType("text");
+
                     b.Property<string>("CurrencyCodeSnapshot")
                         .HasColumnType("text");
 
                     b.Property<DateTime?>("DeliveredAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<int?>("DeliveredBy")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("DeliveryProofUrl")
+                        .HasColumnType("text");
+
                     b.Property<string>("DeliveryTimeSnapshot")
                         .HasColumnType("text");
+
+                    b.Property<DateTime?>("EscrowReleaseAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("EscrowStatus")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("ExchangeEligibleUntil")
+                        .HasColumnType("timestamp with time zone");
 
                     b.Property<int>("ExtensionCount")
                         .HasColumnType("integer");
@@ -1425,6 +1667,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<string>("ProfileUsernameSnapshot")
                         .HasColumnType("text");
 
+                    b.Property<DateTime?>("RefundEligibleUntil")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<int>("RetryCount")
                         .HasColumnType("integer");
 
@@ -1469,6 +1714,51 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("OrderProductAffiliates");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.PaymentFeeSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("CurrencyId")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("FeePercentage")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("FixedFee")
+                        .HasColumnType("numeric");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CurrencyId");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("PaymentFeeSettings");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.PaymentMethod", b =>
                 {
                     b.Property<int>("Id")
@@ -1509,6 +1799,76 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("PaymentMethods");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.PlatformSetting", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<decimal>("CollabSaleCreatorPercentage")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("CollabSaleSellerPercentage")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("CommissionRate")
+                        .HasColumnType("numeric");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("DeliveryExtensionHours")
+                        .HasColumnType("integer");
+
+                    b.Property<decimal>("DirectSaleSellerPercentage")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("EscrowHoldDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("ExchangeWindowDays")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<decimal>("MinimumWithdrawalAmount")
+                        .HasColumnType("numeric");
+
+                    b.Property<decimal>("PlatformFeePercentage")
+                        .HasColumnType("numeric");
+
+                    b.Property<int>("RefundResponseDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RefundWindowDays")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<decimal>("VatRate")
+                        .HasColumnType("numeric");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("PlatformSettings");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.Post", b =>
                 {
                     b.Property<int>("Id")
@@ -1516,6 +1876,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                         .HasColumnType("integer");
 
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("CollabId")
+                        .HasColumnType("text");
 
                     b.Property<DateTime>("CreatedAt")
                         .HasColumnType("timestamp with time zone");
@@ -1818,6 +2181,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                     NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
 
                     b.Property<string>("Brand")
+                        .HasColumnType("text");
+
+                    b.Property<string>("CollabId")
                         .HasColumnType("text");
 
                     b.Property<string>("CountryUid")
@@ -2938,6 +3304,166 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("RefreshTokens");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.RefundDispute", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<string>("AdminResolutionNotes")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<DateTime?>("AdminResolvedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int?>("BuyerProfileId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("BuyerRefundReason")
+                        .HasMaxLength(1000)
+                        .HasColumnType("character varying(1000)");
+
+                    b.Property<DateTime?>("BuyerRefundRequestedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("OrderProductAffiliateId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("ResolvedByAdminUserId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("ReturnAddressLine1")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReturnAddressLine2")
+                        .HasMaxLength(500)
+                        .HasColumnType("character varying(500)");
+
+                    b.Property<string>("ReturnCity")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReturnCountry")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReturnFullName")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<string>("ReturnPhone")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ReturnPostalCode")
+                        .HasMaxLength(50)
+                        .HasColumnType("character varying(50)");
+
+                    b.Property<string>("ReturnState")
+                        .HasMaxLength(200)
+                        .HasColumnType("character varying(200)");
+
+                    b.Property<int?>("SellerProfileId")
+                        .HasColumnType("integer");
+
+                    b.Property<DateTime?>("SellerRejectedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("SellerRejectionReason")
+                        .HasMaxLength(2000)
+                        .HasColumnType("character varying(2000)");
+
+                    b.Property<int>("Status")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("BuyerProfileId");
+
+                    b.HasIndex("OrderProductAffiliateId");
+
+                    b.HasIndex("SellerProfileId");
+
+                    b.HasIndex("Status");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("RefundDisputes", (string)null);
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.RefundDisputeEvidence", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("EvidenceType")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<int>("MediaFileId")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Priority")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RefundDisputeId")
+                        .HasColumnType("integer");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MediaFileId");
+
+                    b.HasIndex("RefundDisputeId");
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("RefundDisputeEvidences", (string)null);
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.Report", b =>
                 {
                     b.Property<int>("Id")
@@ -2993,6 +3519,52 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.HasIndex("Uid");
 
                     b.ToTable("Reports");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.RevokedToken", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ExpiresAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Jti")
+                        .HasColumnType("text");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("UserId")
+                        .HasColumnType("text");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("Jti")
+                        .IsUnique();
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("RevokedTokens");
                 });
 
             modelBuilder.Entity("Core.Domain.Entities.SearchHistory", b =>
@@ -3763,6 +4335,52 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.ToTable("StorySeens");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.StripeWebhookEvent", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<DateTime>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("CreatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventId")
+                        .HasColumnType("text");
+
+                    b.Property<string>("EventType")
+                        .HasColumnType("text");
+
+                    b.Property<bool>("IsActive")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("LastUpdatedBy")
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("ProcessedAtUtc")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Uid")
+                        .IsRequired()
+                        .HasColumnType("text");
+
+                    b.Property<DateTime>("UpdatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("EventId")
+                        .IsUnique();
+
+                    b.HasIndex("Uid");
+
+                    b.ToTable("StripeWebhookEvents");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.SubCategoryLevel1", b =>
                 {
                     b.Property<int>("Id")
@@ -3896,6 +4514,9 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Property<bool>("EmailConfirmed")
                         .HasColumnType("boolean");
 
+                    b.Property<int>("EmailVerificationAttempts")
+                        .HasColumnType("integer");
+
                     b.Property<string>("EmailVerificationCode")
                         .HasColumnType("text");
 
@@ -3933,6 +4554,9 @@ namespace Core.Infrastructure.Persistence.Migrations
 
                     b.Property<string>("PasswordHash")
                         .HasColumnType("text");
+
+                    b.Property<int>("PasswordResetAttempts")
+                        .HasColumnType("integer");
 
                     b.Property<string>("PasswordResetCode")
                         .HasColumnType("text");
@@ -4788,6 +5412,52 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("WalletTransaction");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.EscrowWallet", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.Currency", "Currency")
+                        .WithMany()
+                        .HasForeignKey("CurrencyId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.Profile", "Profile")
+                        .WithMany()
+                        .HasForeignKey("ProfileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("Currency");
+
+                    b.Navigation("Profile");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.EscrowWalletTransaction", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.EscrowWallet", "EscrowWallet")
+                        .WithMany("EscrowWalletTransactions")
+                        .HasForeignKey("EscrowWalletId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.Order", "Order")
+                        .WithMany()
+                        .HasForeignKey("OrderId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.OrderProductAffiliate", "OrderProductAffiliate")
+                        .WithMany()
+                        .HasForeignKey("OrderProductAffiliateId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.Navigation("EscrowWallet");
+
+                    b.Navigation("Order");
+
+                    b.Navigation("OrderProductAffiliate");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.ExchangeRate", b =>
                 {
                     b.HasOne("Core.Domain.Entities.Currency", "Currency")
@@ -4909,6 +5579,25 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("ShippingDetails");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.OrderItemShippingProof", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.MediaFile", "MediaFile")
+                        .WithMany()
+                        .HasForeignKey("MediaFileId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.OrderProductAffiliate", "OrderProductAffiliate")
+                        .WithMany("ShippingProofs")
+                        .HasForeignKey("OrderProductAffiliateId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaFile");
+
+                    b.Navigation("OrderProductAffiliate");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.OrderProductAffiliate", b =>
                 {
                     b.HasOne("Core.Domain.Entities.Affiliate", "Affiliate")
@@ -4939,6 +5628,17 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("Product");
 
                     b.Navigation("ProductVariantCombination");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.PaymentFeeSetting", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.Currency", "Currency")
+                        .WithMany()
+                        .HasForeignKey("CurrencyId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("Currency");
                 });
 
             modelBuilder.Entity("Core.Domain.Entities.Post", b =>
@@ -5483,6 +6183,50 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("User");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.RefundDispute", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.Profile", "BuyerProfile")
+                        .WithMany()
+                        .HasForeignKey("BuyerProfileId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Core.Domain.Entities.OrderProductAffiliate", "OrderProductAffiliate")
+                        .WithMany()
+                        .HasForeignKey("OrderProductAffiliateId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.Profile", "SellerProfile")
+                        .WithMany()
+                        .HasForeignKey("SellerProfileId")
+                        .OnDelete(DeleteBehavior.Restrict);
+
+                    b.Navigation("BuyerProfile");
+
+                    b.Navigation("OrderProductAffiliate");
+
+                    b.Navigation("SellerProfile");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.RefundDisputeEvidence", b =>
+                {
+                    b.HasOne("Core.Domain.Entities.MediaFile", "MediaFile")
+                        .WithMany()
+                        .HasForeignKey("MediaFileId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+
+                    b.HasOne("Core.Domain.Entities.RefundDispute", "RefundDispute")
+                        .WithMany("EvidenceFiles")
+                        .HasForeignKey("RefundDisputeId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.Navigation("MediaFile");
+
+                    b.Navigation("RefundDispute");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.Report", b =>
                 {
                     b.HasOne("Core.Domain.Entities.Post", "Post")
@@ -6020,6 +6764,11 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("Replies");
                 });
 
+            modelBuilder.Entity("Core.Domain.Entities.EscrowWallet", b =>
+                {
+                    b.Navigation("EscrowWalletTransactions");
+                });
+
             modelBuilder.Entity("Core.Domain.Entities.GlobalCurrencySetting", b =>
                 {
                     b.Navigation("ExchangeRates");
@@ -6035,6 +6784,11 @@ namespace Core.Infrastructure.Persistence.Migrations
             modelBuilder.Entity("Core.Domain.Entities.Order", b =>
                 {
                     b.Navigation("OrderProductAffiliates");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.OrderProductAffiliate", b =>
+                {
+                    b.Navigation("ShippingProofs");
                 });
 
             modelBuilder.Entity("Core.Domain.Entities.Post", b =>
@@ -6109,6 +6863,11 @@ namespace Core.Infrastructure.Persistence.Migrations
                     b.Navigation("Reports");
 
                     b.Navigation("StoryLikes");
+                });
+
+            modelBuilder.Entity("Core.Domain.Entities.RefundDispute", b =>
+                {
+                    b.Navigation("EvidenceFiles");
                 });
 
             modelBuilder.Entity("Core.Domain.Entities.Store", b =>

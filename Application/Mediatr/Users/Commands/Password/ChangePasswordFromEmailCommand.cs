@@ -34,18 +34,24 @@ namespace Core.Application.Mediatr.Users.Commands.Password
 
     public class ChangePasswordFromEmailCommandHandler : IRequestHandler<ChangePasswordFromEmailCommand,Unit>
     {
+        // After this many failed verifications the code is invalidated and a new one must be requested.
+        private const int MaxOtpAttempts = 5;
+
         private readonly ILogger<ChangePasswordFromEmailCommandHandler> _logger;
         private readonly UserManager<User> _userManager;
         private readonly IApplicationDbContext _dbContext;
+        private readonly IOtpHasher _otpHasher;
 
         public ChangePasswordFromEmailCommandHandler(
             ILogger<ChangePasswordFromEmailCommandHandler> logger,
             UserManager<User> userManager,
-            IApplicationDbContext dbContext)
+            IApplicationDbContext dbContext,
+            IOtpHasher otpHasher)
         {
             _logger = logger;
             _userManager = userManager;
             _dbContext = dbContext;
+            _otpHasher = otpHasher;
         }
 
         public async Task<Unit> Handle(ChangePasswordFromEmailCommand request, CancellationToken cancellationToken)
@@ -58,9 +64,17 @@ namespace Core.Application.Mediatr.Users.Commands.Password
                     throw new NotFoundException("User not found.");
                 }
 
-                // Verify OTP first
-                if (user.PasswordResetCode != request.Otp)
+                // Verify OTP first (compare against stored hash, tracking failed attempts).
+                if (!_otpHasher.Verify(request.Otp, user.PasswordResetCode))
                 {
+                    user.PasswordResetAttempts++;
+                    if (user.PasswordResetAttempts >= MaxOtpAttempts)
+                    {
+                        // Too many failures: invalidate the code so it can't be brute-forced further.
+                        user.PasswordResetCode = null;
+                        user.PasswordResetCodeExpiry = null;
+                    }
+                    await _dbContext.SaveChangesAsync(cancellationToken);
                     throw new ValidationException("Invalid OTP.");
                 }
 
@@ -86,6 +100,7 @@ namespace Core.Application.Mediatr.Users.Commands.Password
                 // Clear the OTP so it can't be reused
                 user.PasswordResetCode = null;
                 user.PasswordResetCodeExpiry = null;
+                user.PasswordResetAttempts = 0;
                 await _dbContext.SaveChangesAsync(cancellationToken);
 
                 return Unit.Value;

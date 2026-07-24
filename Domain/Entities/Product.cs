@@ -23,6 +23,7 @@ namespace Core.Domain.Entities
         public Store Store { get; set; }
         public ProductTypeEnum Type { get; set; } = ProductTypeEnum.Product; // Default to regular product
         public ProductSellTypeEnum SellType { get; set; } = ProductSellTypeEnum.SellOnPulr;
+        public string? CollabId { get; set; }
         public virtual ICollection<ProductMediaFile> ProductMediaFiles { get; set; }
         public virtual ICollection<ProductVariant> ProductVariant { get; set; }
         public virtual ICollection<ProductVariantCombination> ProductVariantCombinations { get; set; }

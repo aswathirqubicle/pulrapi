@@ -1,11 +1,9 @@
 using System;
+using System.Net.Http;
 using System.Threading.Tasks;
-using Amazon.S3;
-using Amazon.S3.Model;
 using Microsoft.AspNetCore.Mvc;
 using Microsoft.Extensions.Configuration;
 using Microsoft.AspNetCore.Authorization;
-using System.IO;
 using Core.Application.Constants;
 
 namespace WebApi.Controllers
@@ -16,100 +14,44 @@ namespace WebApi.Controllers
     public class DocumentsController : ControllerBase
     {
         private readonly IConfiguration _configuration;
-        private readonly IAmazonS3 _s3Client;
+        private readonly IHttpClientFactory _httpClientFactory;
 
-        public DocumentsController(IConfiguration configuration)
+        public DocumentsController(IConfiguration configuration, IHttpClientFactory httpClientFactory)
         {
             _configuration = configuration;
-            _s3Client = new AmazonS3Client(
-                _configuration["Aws:AwsAccessKeyId"],
-                _configuration["Aws:AwsSecretAccessKey"],
-                Amazon.RegionEndpoint.MESouth1
-            );
+            _httpClientFactory = httpClientFactory;
         }
 
         [HttpGet("terms-of-service")]
-        public async Task<IActionResult> GetTermsOfService()
-        {
-            try
-            {
-                var request = new GetObjectRequest
-                {
-                    BucketName = _configuration[AwsLocationNames.S3DocumentsBucket],
-                    Key = "Term of Service.pdf"
-                };
-
-                using var response = await _s3Client.GetObjectAsync(request);
-                using var responseStream = response.ResponseStream;
-                using var memoryStream = new MemoryStream();
-                await responseStream.CopyToAsync(memoryStream);
-                memoryStream.Position = 0;
-
-                // Create a new response with minimal headers
-                var result = new FileContentResult(memoryStream.ToArray(), "application/pdf");
-                result.FileDownloadName = "Terms of Service.pdf";
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error retrieving document: {ex.Message}");
-            }
-        }
+        public Task<IActionResult> GetTermsOfService()
+            => ProxyDocument("Term of Service.pdf", "Terms of Service.pdf");
 
         [HttpGet("eula-agreement")]
-        public async Task<IActionResult> GetEulaAgreement()
-        {
-            try
-            {
-                var request = new GetObjectRequest
-                {
-                    BucketName = _configuration[AwsLocationNames.S3DocumentsBucket],
-                    Key = "EULA Agreement.pdf"
-                };
-
-                using var response = await _s3Client.GetObjectAsync(request);
-                using var responseStream = response.ResponseStream;
-                using var memoryStream = new MemoryStream();
-                await responseStream.CopyToAsync(memoryStream);
-                memoryStream.Position = 0;
-
-                var result = new FileContentResult(memoryStream.ToArray(), "application/pdf");
-                result.FileDownloadName = "EULA Agreement.pdf";
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error retrieving document: {ex.Message}");
-            }
-        }
+        public Task<IActionResult> GetEulaAgreement()
+            => ProxyDocument("EULA Agreement.pdf", "EULA Agreement.pdf");
 
         [HttpGet("open-source-license")]
-        public async Task<IActionResult> GetOpenSourceLicense()
+        public Task<IActionResult> GetOpenSourceLicense()
+            => ProxyDocument("Pulr App Open Source License.pdf", "Open Source License.pdf");
+
+        private async Task<IActionResult> ProxyDocument(string key, string downloadName)
         {
-            try
-            {
-                var request = new Amazon.S3.Model.GetObjectRequest
-                {
-                    BucketName = _configuration[AwsLocationNames.S3DocumentsBucket],
-                    Key = "Pulr App Open Source License.pdf"
-                };
+            var url = BuildDocumentUrl(key);
+            var client = _httpClientFactory.CreateClient();
+            var response = await client.GetAsync(url, HttpCompletionOption.ResponseHeadersRead);
 
-                using var response = await _s3Client.GetObjectAsync(request);
-                using var responseStream = response.ResponseStream;
-                using var memoryStream = new MemoryStream();
-                await responseStream.CopyToAsync(memoryStream);
-                memoryStream.Position = 0;
+            if (!response.IsSuccessStatusCode)
+                return StatusCode((int)response.StatusCode, $"Document unavailable (S3 returned {(int)response.StatusCode})");
 
-                var result = new FileContentResult(memoryStream.ToArray(), "application/pdf");
-                result.FileDownloadName = "OpenSourceLicense.pdf";
-                return result;
-            }
-            catch (Exception ex)
-            {
-                return StatusCode(500, $"Error retrieving open source license: {ex.Message}");
-            }
+            var stream = await response.Content.ReadAsStreamAsync();
+            return File(stream, "application/pdf", downloadName);
         }
 
-        // get opensource license file
+        private string BuildDocumentUrl(string key)
+        {
+            var bucket = _configuration[AwsLocationNames.S3DocumentsBucket];
+            var region = _configuration[AwsLocationNames.AwsRegion] ?? "ap-south-1";
+            return $"https://{bucket}.s3.{region}.amazonaws.com/{Uri.EscapeDataString(key)}";
+        }
     }
 } 

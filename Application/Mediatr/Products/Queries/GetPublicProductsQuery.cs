@@ -16,7 +16,6 @@ using Core.Application.Models.Profiles;
 using Core.Domain.Entities;
 using Core.Domain.Enums;
 using Microsoft.Extensions.Configuration;
-using Core.Application.Exceptions;
 
 namespace Core.Application.Mediatr.Products.Queries
 {
@@ -24,6 +23,7 @@ namespace Core.Application.Mediatr.Products.Queries
     {
         public string Username { get; set; }
         public ProductTypeEnum? Type { get; set; }
+        public string? CollabId { get; set; }
     }
 
     public class GetPublicProductsQueryHandler : IRequestHandler<GetPublicProductsQuery, PagingResponse<ProductPublicResponse>>
@@ -74,37 +74,62 @@ namespace Core.Application.Mediatr.Products.Queries
                     .Include(p => p.Country);
                 query = query.Where(e => e.IsActive == true);
 
-                // Filter by username if provided
+                // Filter by username(s) if provided (comma-separated for multiple sellers)
                 if (!String.IsNullOrWhiteSpace(request.Username))
                 {
-                    query = query.Where(p => p.User.UserName == request.Username);
+                    var requestedUsernames = request.Username
+                        .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries)
+                        .Distinct()
+                        .ToList();
 
-                    // Privacy check: only followers (or owner) can see private profile's data
-                    var targetProfile = await _dbContext.Profiles
-                        .Include(p => p.ProfileSettings)
-                        .Include(p => p.User)
-                        .SingleOrDefaultAsync(p => p.User.UserName == request.Username, cancellationToken);
-
-                    if (targetProfile != null && targetProfile.ProfileSettings != null && !targetProfile.ProfileSettings.IsProfilePublic)
+                    if (requestedUsernames.Any())
                     {
+                        // Load target profiles for all requested usernames in one query
+                        var targetProfiles = await _dbContext.Profiles
+                            .Include(p => p.ProfileSettings)
+                            .Include(p => p.User)
+                            .Where(p => requestedUsernames.Contains(p.User.UserName))
+                            .ToListAsync(cancellationToken);
+
+                        // Resolve the viewer's profile once (may be null for anonymous callers)
                         var currentUserId = _currentUserService.GetUserId();
-                        var currentUser = await _dbContext.Users
-                            .Include(u => u.Profile)
-                            .SingleOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
-
-                        var isOwner = currentUser != null && currentUser.Profile != null && currentUser.Profile.Uid == targetProfile.Uid;
-                        var isFollower = false;
-                        if (!isOwner && currentUser?.Profile != null)
+                        Core.Domain.Entities.Profile currentProfile = null;
+                        if (!string.IsNullOrWhiteSpace(currentUserId))
                         {
-                            isFollower = await _dbContext.ProfileFollowers.AnyAsync(
-                                pf => pf.ProfileId == targetProfile.Id && pf.FollowerId == currentUser.Profile.Id,
-                                cancellationToken);
+                            var currentUser = await _dbContext.Users
+                                .Include(u => u.Profile)
+                                .SingleOrDefaultAsync(u => u.Id == currentUserId, cancellationToken);
+                            currentProfile = currentUser?.Profile;
                         }
 
-                        if (!isOwner && !isFollower)
+                        // Privacy check: silently skip private profiles the viewer can't access
+                        var allowedUsernames = new List<string>();
+                        foreach (var profile in targetProfiles)
                         {
-                            throw new ForbiddenException("This profile is private.");
+                            var isPrivate = profile.ProfileSettings != null && !profile.ProfileSettings.IsProfilePublic;
+                            if (!isPrivate)
+                            {
+                                allowedUsernames.Add(profile.User.UserName);
+                                continue;
+                            }
+
+                            var isOwner = currentProfile != null && currentProfile.Uid == profile.Uid;
+                            var isFollower = false;
+                            if (!isOwner && currentProfile != null)
+                            {
+                                isFollower = await _dbContext.ProfileFollowers.AnyAsync(
+                                    pf => pf.ProfileId == profile.Id && pf.FollowerId == currentProfile.Id,
+                                    cancellationToken);
+                            }
+
+                            if (isOwner || isFollower)
+                            {
+                                allowedUsernames.Add(profile.User.UserName);
+                            }
                         }
+
+                        // If nothing is accessible this yields an empty paged result (no exception)
+                        query = query.Where(p => allowedUsernames.Contains(p.User.UserName));
                     }
                 }
 
@@ -112,6 +137,12 @@ namespace Core.Application.Mediatr.Products.Queries
                 if (request.Type.HasValue)
                 {
                     query = query.Where(p => p.Type == request.Type.Value);
+                }
+
+                // Filter by CollabId if provided
+                if (!string.IsNullOrWhiteSpace(request.CollabId))
+                {
+                    query = query.Where(p => p.CollabId == request.CollabId);
                 }                             
 
                 if (!String.IsNullOrWhiteSpace(request.Search))
@@ -159,6 +190,7 @@ namespace Core.Application.Mediatr.Products.Queries
                     ProductUrl = product.ProductUrl,
                     Type = product.Type,
                     SellType = product.SellType,
+                    CollabId = product.CollabId,
                     ProductMediaFiles = product.ProductMediaFiles
                         .Where(pmf => pmf.MediaFile.IsActive)
                         .Select(pmf => new MediaFileDetailsResponse

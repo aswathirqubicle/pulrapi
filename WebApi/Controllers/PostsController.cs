@@ -113,11 +113,13 @@ namespace WebApi.Controllers
         [AllowAnonymous]
         [HttpGet("similar/{postUid}")]
         public async Task<ActionResult<PagingResponse<PostDetailsResponse>>> GetSimilarPosts(
-            string postUid, 
+            string postUid,
             [FromQuery] string currencyCode = null,
             [FromQuery] int maxProductMatches = 3,
             [FromQuery] int pageNumber = 1,
-            [FromQuery] int pageSize = 10)
+            [FromQuery] int pageSize = 10,
+            [FromQuery] bool includeBoughtSimilar = false,
+            [FromQuery] bool includeWishlist = false)
         {
             if (!IsValidUid(postUid)) return BadRequest(new { error = "Invalid post UID format." });
 
@@ -127,9 +129,11 @@ namespace WebApi.Controllers
                 CurrencyCode = currencyCode,
                 MaxProductMatches = maxProductMatches,
                 PageNumber = pageNumber,
-                PageSize = pageSize
+                PageSize = pageSize,
+                IncludeBoughtSimilar = includeBoughtSimilar,
+                IncludeWishlist = includeWishlist
             };
-            
+
             var res = await Mediator.Send(query);
             return Ok(res);
         }

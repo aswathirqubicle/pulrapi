@@ -41,7 +41,9 @@ namespace Core.Application.Mediatr.Profiles.Queries
 
             var profiles = await _dbContext.Profiles
                 .Include(p => p.User)
-                .Where(p => profileIds.Contains(p.Id))
+                .Include(p => p.ProfileSettings)
+                .Where(p => profileIds.Contains(p.Id) &&
+                            (p.ProfileSettings == null || p.ProfileSettings.IsProfilePublic))
                 .ToListAsync(cancellationToken);
 
             var result = new List<MostFollowedProfileDto>();

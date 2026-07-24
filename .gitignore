@@ -370,7 +370,7 @@ FodyWeavers.xsd
 WebApi/aws-logger-errors.txt
 /WebApi/aws-logger-errors.txt
 /WebApi/aws-logger-errors.txt
-# /WebApi/appsettings.json
+/WebApi/appsettings.json
 /PRODUCT_TAGGING_README.md
 /API_Documentation.md
 /NOTIFICATION_FIX_SUMMARY.md
@@ -381,15 +381,4 @@ WebApi/aws-logger-errors.txt
 *.md
 *.mdc
 
-.claude/
-.claude-flow/
-.cursor/
-.mcp.json
-agents/architect.yaml
-agents/coder.yaml
-agents/reviewer.yaml
-agents/security-architect.yaml
-agents/tester.yaml
-.swarm/schema.sql
-.swarm/memory.db
-.swarm/state.json
+.*/

@@ -109,6 +109,8 @@ namespace Core.Infrastructure.Persistence
         public virtual DbSet<Mention> Mentions { get; set; }
         public virtual DbSet<UserPushToken> UserPushTokens { get; set; }
         public virtual DbSet<RefreshToken> RefreshTokens { get; set; }
+        public virtual DbSet<RevokedToken> RevokedTokens { get; set; }
+        public virtual DbSet<StripeWebhookEvent> StripeWebhookEvents { get; set; }
         public virtual DbSet<BookmarkCollection> BookmarkCollections { get; set; }
         public virtual DbSet<BookmarkCollectionItem> BookmarkCollectionItems { get; set; }
 
@@ -121,9 +123,16 @@ namespace Core.Infrastructure.Persistence
         public virtual DbSet<Order> Orders { get; set; }
         public virtual DbSet<PaymentMethod> PaymentMethods { get; set; }
         public virtual DbSet<OrderProductAffiliate> OrderProductAffiliates { get; set; }
+        public virtual DbSet<OrderItemShippingProof> OrderItemShippingProofs { get; set; }
         public virtual DbSet<UserBlock> UserBlocks { get; set; }
         public virtual DbSet<WalletTransaction> WalletTransactions { get; set; }
         public virtual DbSet<Dispute> Disputes { get; set; }
+        public virtual DbSet<PaymentFeeSetting> PaymentFeeSettings { get; set; }
+        public virtual DbSet<PlatformSetting> PlatformSettings { get; set; }
+        public virtual DbSet<EscrowWallet> EscrowWallets { get; set; }
+        public virtual DbSet<EscrowWalletTransaction> EscrowWalletTransactions { get; set; }
+        public virtual DbSet<RefundDispute> RefundDisputes { get; set; }
+        public virtual DbSet<RefundDisputeEvidence> RefundDisputeEvidences { get; set; }
 
         #endregion
 
@@ -166,6 +175,18 @@ namespace Core.Infrastructure.Persistence
                 .WithMany(p => p.BlockedByUsers)
                 .HasForeignKey(ub => ub.BlockedProfileId)
                 .OnDelete(DeleteBehavior.Cascade);
+
+            // Revoked (logged-out) JWT tokens are looked up by jti on every
+            // authenticated request, so the column is uniquely indexed.
+            builder.Entity<RevokedToken>()
+                .HasIndex(rt => rt.Jti)
+                .IsUnique();
+
+            // Stripe delivers webhooks at-least-once; the event id is the idempotency
+            // key, so it is uniquely indexed to detect and reject duplicate deliveries.
+            builder.Entity<StripeWebhookEvent>()
+                .HasIndex(e => e.EventId)
+                .IsUnique();
 
             // any config goes to persistence/configuration
         }

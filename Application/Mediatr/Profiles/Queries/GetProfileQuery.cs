@@ -249,6 +249,7 @@ namespace Core.Application.Mediatr.Profiles.Queries
 
                     // Relationships (if current user exists)
                     FollowedByMe = profileData.IsFollowedByMe,
+                    IsFollowingMe = profileData.FollowsMe,
                     FollowRequestSent = profileData.FollowRequestSentByMe,
                     FollowRequestReceived = profileData.FollowRequestReceivedFromTarget,
                     CanFollowBack = profileData.FollowsMe && !profileData.IsFollowedByMe,
@@ -282,6 +283,7 @@ namespace Core.Application.Mediatr.Profiles.Queries
 
                             // Relationship flags
                             FollowedByMe = response.FollowedByMe,
+                            IsFollowingMe = response.IsFollowingMe,
                             FollowRequestSent = response.FollowRequestSent,
                             FollowRequestReceived = response.FollowRequestReceived,
                             CanFollowBack = response.CanFollowBack

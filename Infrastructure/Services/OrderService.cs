@@ -6,6 +6,7 @@ using System.Threading.Tasks;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Newtonsoft.Json;
+using Core.Application.Authorization;
 using Core.Application.Interfaces;
 using Core.Application.Models;
 using Core.Application.Models.Orders;
@@ -131,9 +132,23 @@ public class OrderService : IOrderService
         if (order == null) throw new NotFoundException("Order not found");
 
         var profile = await _dbContext.Profiles.FirstOrDefaultAsync(p => p.UserId == userId, cancellationToken);
-        
+
         var orderIds = new List<int> { order.Id };
         var allAffiliates = await GetOrderAffiliatesAsync(orderIds, cancellationToken);
+
+        // AUTHORIZATION (IDOR guard): the viewer must be either the buyer of this
+        // order or a seller for at least one of its items. Any other authenticated
+        // user is rejected before mapping so buyer/shipping/billing/payment data is
+        // never disclosed. Throw NotFound (404) rather than Forbidden (403) so the
+        // existence of an order cannot be confirmed by enumerating UIDs.
+        var orderItemSellerUserIds = allAffiliates
+            .Where(opa => opa.Product != null)
+            .Select(opa => opa.Product.UserId);
+        if (!OrderAccessPolicy.CanView(order.ProfileId, profile?.Id, orderItemSellerUserIds, userId))
+        {
+            throw new NotFoundException("Order not found");
+        }
+
         var productIds = allAffiliates.Select(opa => opa.ProductId).Distinct().ToList();
         var allProducts = await GetProductsWithRelatedDataAsync(productIds, cancellationToken);
         var sellerSettings = await GetSellerSettingsAsync(allProducts, cancellationToken);
@@ -150,6 +165,7 @@ public class OrderService : IOrderService
         return await _dbContext.OrderProductAffiliates
             .Include(opa => opa.Product)
             .Include(opa => opa.ProductVariantCombination).ThenInclude(pvc => pvc.CombinationOptions).ThenInclude(co => co.ProductVariantOption).ThenInclude(pvo => pvo.ProductVariant)
+            .Include(opa => opa.ShippingProofs).ThenInclude(sp => sp.MediaFile)
             .Where(opa => orderIds.Contains(opa.OrderId))
             .ToListAsync(cancellationToken);
     }
@@ -194,10 +210,17 @@ public class OrderService : IOrderService
 
     private async Task<Dictionary<int, WalletTransaction>> GetItemTransactionsAsync(List<int> orderIds, CancellationToken cancellationToken)
     {
-        // Get item-level transactions (refunds) indexed by OrderProductAffiliateId
-        return await _dbContext.WalletTransactions
+        // Get item-level transactions (refunds) indexed by OrderProductAffiliateId.
+        // Refund flows create both a buyer-side and seller-side WalletTransaction per
+        // item, sharing the same OrderProductAffiliateId, so multiple rows can map to
+        // the same key here - group and pick one (only TransactionDate is consumed).
+        var itemTransactions = await _dbContext.WalletTransactions
             .Where(wt => orderIds.Contains(wt.OrderId ?? 0) && wt.OrderProductAffiliateId.HasValue)
-            .ToDictionaryAsync(wt => wt.OrderProductAffiliateId.Value, wt => wt, cancellationToken);
+            .ToListAsync(cancellationToken);
+
+        return itemTransactions.GroupBy(wt => wt.OrderProductAffiliateId.Value).ToDictionary(
+            g => g.Key,
+            g => g.OrderByDescending(wt => wt.TransactionType == TransactionTypeEnum.Refund).ThenBy(wt => wt.TransactionDate).FirstOrDefault());
     }
 
     private OrderResponse MapToOrderResponse(
@@ -266,6 +289,8 @@ public class OrderService : IOrderService
             ShippingDetails = ShippingDetailsResponse.MapFromEntity(order.ShippingDetails) ?? new ShippingDetailsResponse(),
             BillingDetails = ShippingDetailsResponse.MapFromEntity(order.BillingDetails) ?? ShippingDetailsResponse.MapFromEntity(order.ShippingDetails) ?? new ShippingDetailsResponse(),
             Amount = order.Amount,
+            Vat = order.VatAmount > 0 ? order.VatAmount : (decimal?)null,
+            PaymentBreakdown = PaymentBreakdownResponse.Build(order.VatAmount, order.OrderProductAffiliates, isBuyer: true),
             TrackingNumber = order.TrackingNumber,
             ShippingProvider = order.ShippingProvider,
             ShippedAt = order.ShippedAt,
@@ -301,6 +326,8 @@ public class OrderService : IOrderService
             BuyerFullName = order.Profile?.User?.FirstName,
             SellerFullNames = orderItems.Select(opa => opa.Product?.User?.FirstName).Where(n => !string.IsNullOrWhiteSpace(n)).Distinct().ToList(),
             Amount = order.Amount,
+            Vat = isBuyer && order.VatAmount > 0 ? order.VatAmount : (decimal?)null,
+            PaymentBreakdown = PaymentBreakdownResponse.Build(order.VatAmount, order.OrderProductAffiliates, isBuyer),
             CreatedAt = order.CreatedAt,
             Note = order.Note,
             PaymentMethodUid = order.PaymentMethod?.Uid,
@@ -457,6 +484,12 @@ public class OrderService : IOrderService
             ShippingProvider = opa.ShippingProvider,
             ShippedAt = opa.ShippedAt,
             DeliveredAt = opa.DeliveredAt,
+            ShippingProofImageUrls = opa.ShippingProofs?
+                .OrderBy(sp => sp.Priority)
+                .Select(sp => sp.MediaFile?.Url)
+                .Where(url => url != null)
+                .ToList() ?? new List<string>(),
+            WasShipped = opa.ShippedAt.HasValue,
             // Retry/Reorder tracking
             RetryCount = opa.RetryCount,
             CountdownExpiryDate = effectiveCountdownExpiry,
@@ -538,6 +571,7 @@ public class OrderService : IOrderService
         List<string> itemUids, 
         string trackingNumber, 
         string shippingProvider, 
+        List<int> shippingProofMediaFileIds,
         CancellationToken cancellationToken)
     {
         var orderItems = await _dbContext.OrderProductAffiliates
@@ -573,6 +607,20 @@ public class OrderService : IOrderService
             orderItem.ShippingProvider = shippingProvider;
             orderItem.ShippedAt = DateTime.UtcNow;
             orderItem.UpdatedAt = DateTime.UtcNow;
+
+            // Attach shipping proof media files
+            if (shippingProofMediaFileIds != null && shippingProofMediaFileIds.Any())
+            {
+                for (int i = 0; i < shippingProofMediaFileIds.Count; i++)
+                {
+                    _dbContext.OrderItemShippingProofs.Add(new OrderItemShippingProof
+                    {
+                        OrderProductAffiliateId = orderItem.Id,
+                        MediaFileId = shippingProofMediaFileIds[i],
+                        Priority = i
+                    });
+                }
+            }
 
             orderIdsToUpdate.Add(orderItem.OrderId);
         }
@@ -653,6 +701,14 @@ public class OrderService : IOrderService
             throw new NotFoundException($"No active order items found for the provided UIDs.");
         }
 
+        // Escrow / refund / exchange windows are anchored on DeliveredAt (per the escrow doc:
+        // refund = +3d, exchange = +21d, escrow release = +21d). Read the configured values,
+        // falling back to the documented defaults when PlatformSettings has no row.
+        var platformSettings = await _dbContext.PlatformSettings.FirstOrDefaultAsync(cancellationToken);
+        var refundWindowDays = platformSettings != null && platformSettings.RefundWindowDays > 0 ? platformSettings.RefundWindowDays : 3;
+        var exchangeWindowDays = platformSettings != null && platformSettings.ExchangeWindowDays > 0 ? platformSettings.ExchangeWindowDays : 21;
+        var escrowHoldDays = platformSettings != null && platformSettings.EscrowHoldDays > 0 ? platformSettings.EscrowHoldDays : 21;
+
         var orderIdsToUpdate = new HashSet<int>();
 
         foreach (var orderItem in orderItems)
@@ -663,18 +719,55 @@ public class OrderService : IOrderService
                 throw new ForbiddenException($"You are not authorized to confirm delivery for order item {orderItem.Uid}.");
             }
 
-            // Verify the item is in Shipped status
-            if (orderItem.OrderItemStatus != OrderStatusEnum.Shipped)
+            // Verify the item was actually shipped (ShippedAt exists)
+            if (!orderItem.ShippedAt.HasValue)
             {
-                throw new BadRequestException($"Order item {orderItem.Uid} cannot be confirmed as delivered. Current status: {orderItem.OrderItemStatus}");
+                throw new BadRequestException($"Order item {orderItem.Uid} cannot be confirmed - it was never shipped.");
             }
 
-            // Update the order item
+            // Verify the item is in a valid status for confirmation (Shipped or OrderFailed after countdown expiry)
+            if (orderItem.OrderItemStatus != OrderStatusEnum.Shipped && orderItem.OrderItemStatus != OrderStatusEnum.OrderFailed)
+            {
+                throw new BadRequestException($"Order item {orderItem.Uid} cannot be confirmed. Current status: {orderItem.OrderItemStatus}");
+            }
+
+            // Block if already refunded
+            if (orderItem.OrderItemStatus == OrderStatusEnum.Refunded)
+            {
+                throw new BadRequestException($"Order item {orderItem.Uid} was refunded and cannot be confirmed.");
+            }
+
+            // Block if already confirmed
+            if (orderItem.OrderItemStatus == OrderStatusEnum.Delivered || orderItem.OrderItemStatus == OrderStatusEnum.Completed)
+            {
+                throw new BadRequestException($"Order item {orderItem.Uid} is already confirmed as delivered.");
+            }
+
+            // Update the order item and arm the escrow clock + refund/exchange windows.
+            var now = DateTime.UtcNow;
             orderItem.OrderItemStatus = OrderStatusEnum.Delivered;
-            orderItem.DeliveredAt = DateTime.UtcNow;
-            orderItem.UpdatedAt = DateTime.UtcNow;
+            orderItem.DeliveredAt = now;
+            orderItem.EscrowStatus = EscrowStatusEnum.InEscrow;
+            orderItem.RefundEligibleUntil = now.AddDays(refundWindowDays);
+            orderItem.ExchangeEligibleUntil = now.AddDays(exchangeWindowDays);
+            orderItem.EscrowReleaseAt = now.AddDays(escrowHoldDays);
+            orderItem.UpdatedAt = now;
 
             orderIdsToUpdate.Add(orderItem.OrderId);
+        }
+
+        // Mirror the computed release date onto each delivered line's active escrow ledger row,
+        // so EscrowWalletTransactions.EscrowReleaseAt matches the order item.
+        var deliveredItemIds = orderItems.Select(oi => oi.Id).ToList();
+        var escrowTxs = await _dbContext.EscrowWalletTransactions
+            .Where(ewt => deliveredItemIds.Contains(ewt.OrderProductAffiliateId)
+                       && ewt.Status == EscrowWalletTransactionStatusEnum.Active)
+            .ToListAsync(cancellationToken);
+        foreach (var ewt in escrowTxs)
+        {
+            var item = orderItems.First(oi => oi.Id == ewt.OrderProductAffiliateId);
+            ewt.EscrowReleaseAt = item.EscrowReleaseAt;
+            ewt.UpdatedAt = DateTime.UtcNow;
         }
 
         // Update parent order statuses

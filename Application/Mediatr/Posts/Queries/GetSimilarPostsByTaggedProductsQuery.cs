@@ -24,11 +24,14 @@ namespace Core.Application.Mediatr.Posts.Queries
     {
         [Required]
         public string PostUid { get; set; }
-        
+
         public string CurrencyCode { get; set; }
-        
+
         [Range(1, 10, ErrorMessage = "MaxProductMatches must be between 1 and 10")]
-        public int MaxProductMatches { get; set; } = 3; // How many products should match to consider it similar
+        public int MaxProductMatches { get; set; } = 3;
+
+        public bool IncludeBoughtSimilar { get; set; } = false;
+        public bool IncludeWishlist { get; set; } = false;
     }
 
     public class GetSimilarPostsByTaggedProductsQueryHandler : IRequestHandler<GetSimilarPostsByTaggedProductsQuery, PagingResponse<PostDetailsResponse>>
@@ -70,11 +73,90 @@ namespace Core.Application.Mediatr.Posts.Queries
                     .FirstOrDefaultAsync(cancellationToken);
 
                 if (currentPost == null) throw new NotFoundException("Post not found");
-                if (!currentPost.ProductUids.Any()) return new PagingResponse<PostDetailsResponse> { Items = new List<PostDetailsResponse>(), CurrentPage = request.PageNumber, PageSize = request.PageSize };
 
                 var currentUser = await _currentUserService.GetUserAsync();
                 var currentProfileId = currentUser?.Profile?.Id;
                 var currentProfileUid = currentUser?.Profile?.Uid;
+
+                // 2a. Expand source product set for bought-similar and bag-similar
+                var boughtSimilarProductUids = new HashSet<string>();
+                var bagSimilarProductUids    = new HashSet<string>();
+
+                if (currentProfileId != null)
+                {
+                    if (request.IncludeBoughtSimilar)
+                    {
+                        var boughtData = await _dbContext.OrderProductAffiliates
+                            .AsNoTracking()
+                            .Where(opa => opa.Order.IsActive && opa.Order.ProfileId == currentProfileId)
+                            .Select(opa => new { opa.ProductId, opa.Product.WhatIsIt, opa.Product.Brand, opa.Product.Name })
+                            .Distinct()
+                            .ToListAsync(cancellationToken);
+
+                        var exactBoughtIds    = boughtData.Select(x => x.ProductId).ToHashSet();
+                        var boughtWhatIsItSet = boughtData.Where(x => !string.IsNullOrEmpty(x.WhatIsIt)).Select(x => x.WhatIsIt).ToHashSet();
+                        var boughtBrandSet    = boughtData.Where(x => !string.IsNullOrEmpty(x.Brand)).Select(x => x.Brand).ToHashSet();
+                        var boughtNames       = boughtData.Where(x => !string.IsNullOrEmpty(x.Name)).Select(x => x.Name).ToList();
+
+                        if (boughtWhatIsItSet.Any() || boughtBrandSet.Any() || boughtNames.Any())
+                        {
+                            boughtSimilarProductUids = (await _dbContext.Products
+                                .AsNoTracking()
+                                .Where(p => p.IsActive
+                                         && !exactBoughtIds.Contains(p.Id)
+                                         && (boughtWhatIsItSet.Contains(p.WhatIsIt)
+                                             || boughtBrandSet.Contains(p.Brand)
+                                             || boughtNames.Any(n => p.Name.Contains(n))))
+                                .Select(p => p.Uid)
+                                .ToListAsync(cancellationToken))
+                                .ToHashSet();
+                        }
+                    }
+
+                    if (request.IncludeWishlist)
+                    {
+                        var bagProductUids = (await _dbContext.UserBagProducts
+                            .AsNoTracking()
+                            .Where(ubp => ubp.UserId == currentUser.Id)
+                            .Select(ubp => ubp.BagProduct.Uid)
+                            .Distinct()
+                            .ToListAsync(cancellationToken))
+                            .ToHashSet();
+
+                        if (bagProductUids.Any())
+                        {
+                            var bagDetails = await _dbContext.Products
+                                .AsNoTracking()
+                                .Where(p => bagProductUids.Contains(p.Uid))
+                                .Select(p => new { p.WhatIsIt, p.Brand, p.Name })
+                                .ToListAsync(cancellationToken);
+
+                            var bagWhatIsItSet = bagDetails.Where(x => !string.IsNullOrEmpty(x.WhatIsIt)).Select(x => x.WhatIsIt).ToHashSet();
+                            var bagBrandSet    = bagDetails.Where(x => !string.IsNullOrEmpty(x.Brand)).Select(x => x.Brand).ToHashSet();
+                            var bagNames       = bagDetails.Where(x => !string.IsNullOrEmpty(x.Name)).Select(x => x.Name).ToList();
+
+                            if (bagWhatIsItSet.Any() || bagBrandSet.Any() || bagNames.Any())
+                            {
+                                bagSimilarProductUids = (await _dbContext.Products
+                                    .AsNoTracking()
+                                    .Where(p => p.IsActive
+                                             && (bagWhatIsItSet.Contains(p.WhatIsIt)
+                                                 || bagBrandSet.Contains(p.Brand)
+                                                 || bagNames.Any(n => p.Name.Contains(n))))
+                                    .Select(p => p.Uid)
+                                    .ToListAsync(cancellationToken))
+                                    .ToHashSet();
+                            }
+                        }
+                    }
+                }
+
+                var expandedProductUids = new HashSet<string>(currentPost.ProductUids);
+                expandedProductUids.UnionWith(boughtSimilarProductUids);
+                expandedProductUids.UnionWith(bagSimilarProductUids);
+
+                if (!expandedProductUids.Any())
+                    return new PagingResponse<PostDetailsResponse> { Items = new List<PostDetailsResponse>(), CurrentPage = request.PageNumber, PageSize = request.PageSize };
 
                 // 2. Fetch exchange rates (Batched)
                 List<ExchangeRate> exchangeRates = null;
@@ -98,7 +180,7 @@ namespace Core.Application.Mediatr.Posts.Queries
                 var similarPostsBaseQuery = _dbContext.Posts
                     .AsNoTracking()
                     .Where(p => p.IsActive && p.Uid != request.PostUid)
-                    .Where(p => p.PostProductTags.Any(ppt => ppt.Product != null && currentPost.ProductUids.Contains(ppt.Product.Uid)));
+                    .Where(p => p.PostProductTags.Any(ppt => ppt.Product != null && expandedProductUids.Contains(ppt.Product.Uid)));
 
                 // Filter blocks and reports (DB side)
                 if (!string.IsNullOrEmpty(currentProfileUid))
@@ -112,6 +194,23 @@ namespace Core.Application.Mediatr.Posts.Queries
                 similarPostsBaseQuery = similarPostsBaseQuery.Where(p => !_dbContext.Reports
                     .Any(r => r.ReportType == ReportTypeEnum.Post && r.IsActive && r.EntityUid == p.Uid));
 
+                // Filter out posts from private profiles that the current user doesn't follow
+                if (currentProfileId.HasValue)
+                {
+                    similarPostsBaseQuery = similarPostsBaseQuery.Where(p =>
+                        p.User.Profile.ProfileSettings == null ||
+                        p.User.Profile.ProfileSettings.IsProfilePublic ||
+                        p.User.Profile.Id == currentProfileId.Value ||
+                        _dbContext.ProfileFollowers.Any(pf =>
+                            pf.ProfileId == p.User.Profile.Id && pf.FollowerId == currentProfileId.Value));
+                }
+                else
+                {
+                    similarPostsBaseQuery = similarPostsBaseQuery.Where(p =>
+                        p.User.Profile.ProfileSettings == null ||
+                        p.User.Profile.ProfileSettings.IsProfilePublic);
+                }
+
                 var totalCount = await similarPostsBaseQuery.CountAsync(cancellationToken);
                 if (totalCount == 0) return new PagingResponse<PostDetailsResponse> { Items = new List<PostDetailsResponse>(), CurrentPage = request.PageNumber, PageSize = request.PageSize };
 
@@ -119,11 +218,17 @@ namespace Core.Application.Mediatr.Posts.Queries
                     .Select(p => new
                     {
                         Uid = p.Uid,
-                        ProductMatchCount = p.PostProductTags.Count(ppt => ppt.Product != null && currentPost.ProductUids.Contains(ppt.Product.Uid)),
-                        FollowerCount = p.User.Profile.ProfileFollowers.Count,
-                        CreatedAt = p.CreatedAt
+                        ProductMatchCount  = p.PostProductTags.Count(ppt => ppt.Product != null && currentPost.ProductUids.Contains(ppt.Product.Uid)),
+                        BoughtSimilarCount = p.PostProductTags.Count(ppt => ppt.Product != null && boughtSimilarProductUids.Contains(ppt.Product.Uid)),
+                        BagSimilarCount    = p.PostProductTags.Count(ppt => ppt.Product != null && bagSimilarProductUids.Contains(ppt.Product.Uid)),
+                        FollowerCount      = p.User.Profile.ProfileFollowers.Count,
+                        CreatedAt          = p.CreatedAt
                     })
-                    .OrderByDescending(x => x.ProductMatchCount * 100 + x.FollowerCount)
+                    .OrderByDescending(x =>
+                        (x.BagSimilarCount    * 300) +
+                        (x.BoughtSimilarCount * 200) +
+                        (x.ProductMatchCount  * 100) +
+                        x.FollowerCount)
                     .ThenByDescending(x => x.FollowerCount)
                     .ThenByDescending(x => x.CreatedAt)
                     .Skip((request.PageNumber - 1) * request.PageSize)

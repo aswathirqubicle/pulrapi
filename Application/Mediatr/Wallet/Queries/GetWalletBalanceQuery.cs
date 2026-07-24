@@ -5,6 +5,7 @@ using System.Threading.Tasks;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
 using Core.Application.Models.Wallet;
+using Core.Domain.Enums;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,6 +15,10 @@ namespace Core.Application.Mediatr.Wallet.Queries
     public class GetWalletBalanceQuery : IRequest<WalletBalanceResponse>
     {
     }
+
+    // Keyless row for reading the stored AspNetUsers balance columns via raw SQL.
+    // These columns are not mapped on the EF User entity.
+    public record UserBalanceRow(decimal AvailableBalance, decimal EscrowBalance);
 
     public class GetWalletBalanceQueryHandler : IRequestHandler<GetWalletBalanceQuery, WalletBalanceResponse>
     {
@@ -41,18 +46,17 @@ namespace Core.Application.Mediatr.Wallet.Queries
                     throw new NotAuthenticatedException("User must be logged in.");
                 }
 
-                var profile = await _dbContext.Profiles.FirstOrDefaultAsync(p => p.UserId == user.Id, cancellationToken);
-                if (profile == null)
-                {
-                    throw new NotFoundException("Profile not found.");
-                }
+                // Read the stored running-total balances from AspNetUsers. These columns
+                // (maintained by the escrow-release payout job, withdrawal flow, and refund
+                // handling) are the authoritative available/in-escrow amounts. They are not
+                // mapped on the EF User entity, so read them via raw SQL.
+                var row = await _dbContext.Database
+                    .SqlQuery<UserBalanceRow>(
+                        $"SELECT \"AvailableBalance\", \"EscrowBalance\" FROM \"AspNetUsers\" WHERE \"Id\" = {user.Id}")
+                    .FirstOrDefaultAsync(cancellationToken);
 
-                // Calculate balance dynamically from completed Refund transactions only
-                // Wallet is only affected by refunds, not by purchases, sales, or other transaction types
-                var balance = await _dbContext.WalletTransactions
-                    .Where(t => t.IsActive && t.ProfileId == profile.Id && t.Status == Core.Domain.Enums.TransactionStatusEnum.Completed)
-                    .Where(t => t.TransactionType == Core.Domain.Enums.TransactionTypeEnum.Refund)
-                    .SumAsync(t => t.Amount, cancellationToken);
+                var available = row?.AvailableBalance ?? 0m;
+                var escrow = row?.EscrowBalance ?? 0m;
 
                 // Get user's default currency (or use AED as default)
                 var defaultCurrency = await _dbContext.GlobalCurrencySettings
@@ -61,7 +65,9 @@ namespace Core.Application.Mediatr.Wallet.Queries
 
                 return new WalletBalanceResponse
                 {
-                    AvailableBalance = balance,
+                    AvailableBalance = available,
+                    EscrowBalance = escrow,
+                    TotalBalance = available + escrow,
                     CurrencyCode = defaultCurrency?.BaseCurrency?.Code ?? "AED"
                 };
             }

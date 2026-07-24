@@ -35,5 +35,6 @@ namespace Core.Domain.Entities
         public virtual ICollection<PostClick> PostClicks { get; set; } = new List<PostClick>();
         public virtual ICollection<PostMyStyle> PostMyStyles { get; set; } = new List<PostMyStyle>();
         public virtual ICollection<Report> Reports { get; set; } = new List<Report>();
+        public string? CollabId { get; set; }
     }
 }

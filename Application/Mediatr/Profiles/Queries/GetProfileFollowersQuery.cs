@@ -1,4 +1,4 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
 using Core.Application.Models;
@@ -30,8 +30,8 @@ namespace Core.Application.Mediatr.Profiles.Queries
         private readonly ICurrentUserService _currentUserService;
         private readonly IMapper _mapper;
 
-        public GetProfileFollowersQueryHandler(IApplicationDbContext dbContext, 
-            ILogger<GetProfileFollowersQueryHandler> logger, 
+        public GetProfileFollowersQueryHandler(IApplicationDbContext dbContext,
+            ILogger<GetProfileFollowersQueryHandler> logger,
             ICurrentUserService currentUserService,
             IMapper mapper)
         {
@@ -46,17 +46,38 @@ namespace Core.Application.Mediatr.Profiles.Queries
             try
             {
                 var cUser = await _currentUserService.GetUserAsync();
+                var currentProfileId = cUser?.Profile?.Id;
+                var currentProfileUid = cUser?.Profile?.Uid;
                 var dateTimeNow = DateTime.UtcNow;
 
-                var profile = await _dbContext.Profiles.Where(p => p.Uid == request.ProfileUid).SingleOrDefaultAsync(cancellationToken);
+                var profile = await _dbContext.Profiles
+                    .Include(p => p.ProfileSettings)
+                    .Where(p => p.Uid == request.ProfileUid)
+                    .SingleOrDefaultAsync(cancellationToken);
                 if (profile == null)
                 {
                     throw new BadRequestException("Profile doesnt exist");
                 }
 
-                IQueryable<ProfileFollower> profileFollowersQueryable = _dbContext.ProfileFollowers;
+                bool isProfilePublic = profile.ProfileSettings == null || profile.ProfileSettings.IsProfilePublic;
 
-                var profileFollowers = profileFollowersQueryable.Where(pf => pf.ProfileId == profile.Id && pf.Follower.IsActive);
+                bool currentUserFollowsProfile = currentProfileId.HasValue &&
+                    await _dbContext.ProfileFollowers.AnyAsync(
+                        pf => pf.ProfileId == profile.Id && pf.FollowerId == currentProfileId.Value, cancellationToken);
+                bool profileFollowsCurrentUser = currentProfileId.HasValue &&
+                    await _dbContext.ProfileFollowers.AnyAsync(
+                        pf => pf.ProfileId == currentProfileId.Value && pf.FollowerId == profile.Id, cancellationToken);
+
+                if (!isProfilePublic)
+                {
+                    bool isOwner = currentProfileId.HasValue && profile.Id == currentProfileId.Value;
+                    if (!isOwner && !currentUserFollowsProfile)
+                        throw new ForbiddenException("This profile is private.");
+                }
+
+                var profileFollowers = _dbContext.ProfileFollowers
+                    .Where(pf => pf.ProfileId == profile.Id && pf.Follower.IsActive);
+
                 if (!string.IsNullOrWhiteSpace(request.Search))
                 {
                     var searchTerm = request.Search.ToLower();
@@ -76,13 +97,14 @@ namespace Core.Application.Mediatr.Profiles.Queries
                     PostsCount = p.Follower.User.Posts.Count(post => post.IsActive),
                     About = p.Follower.About,
                     Location = p.Follower.Location,
+                    IsProfilePublic = p.Follower.ProfileSettings == null || p.Follower.ProfileSettings.IsProfilePublic,
                     WebsiteUrl = p.Follower.ProfileSocialMedia.WebsiteUrl,
                     InstagramUrl = p.Follower.ProfileSocialMedia.InstagramUrl,
                     FacebookUrl = p.Follower.ProfileSocialMedia.FacebookUrl,
                     TwitterUrl = p.Follower.ProfileSocialMedia.TwitterUrl,
                     TikTokUrl = p.Follower.ProfileSocialMedia.TikTokUrl,
-                    ActiveStoriesCount = cUser != null 
-                        ? p.Follower.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow && !story.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id)) 
+                    ActiveStoriesCount = cUser != null
+                        ? p.Follower.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow && !story.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id))
                         : p.Follower.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow),
                     StoriesSeenCount = p.Follower.User.Stories
                         .Where(story => story.IsActive && story.StoryExpiresIn > dateTimeNow)
@@ -90,11 +112,20 @@ namespace Core.Application.Mediatr.Profiles.Queries
                         .Select(seen => seen.SeenById)
                         .Distinct()
                         .Count(),
-                    UnseenStoriesCount = cUser != null 
+                    UnseenStoriesCount = cUser != null
                         ? p.Follower.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow && !story.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id))
                         : p.Follower.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow),
-                    FollowedByMe = cUser != null ? profileFollowersQueryable
-                        .Where(pf => pf.Follower.Uid == cUser.Profile.Uid && pf.Profile.Uid == p.Follower.Uid).Any() : false,
+                    FollowedByMe = currentProfileId.HasValue &&
+                        p.Follower.ProfileFollowers.Any(pf2 => pf2.FollowerId == currentProfileId.Value),
+                    IsFollowingMe = currentProfileId.HasValue &&
+                        p.Follower.ProfileFollowings.Any(pf2 => pf2.ProfileId == currentProfileId.Value),
+                    FollowRequestSent = currentProfileUid != null && _dbContext.FollowRequests
+                        .Any(fr => fr.RequesterProfileId == currentProfileUid
+                                && fr.TargetProfileId == p.Follower.Uid
+                                && fr.IsActive),
+                    CanFollowBack = currentProfileId.HasValue &&
+                        p.Follower.ProfileFollowings.Any(pf2 => pf2.ProfileId == currentProfileId.Value) &&
+                        !p.Follower.ProfileFollowers.Any(pf2 => pf2.FollowerId == currentProfileId.Value),
                     Stores = p.Follower.User.Stores.Select(s => new StoreDetailsResponse
                     {
                         Followers = s.StoreFollowers.Count(),
@@ -106,7 +137,10 @@ namespace Core.Application.Mediatr.Profiles.Queries
                 });
 
                 var list = await PagedList<ProfileDetailsResponse>.ToPagedListAsync(followersQuery, request.PageNumber, request.PageSize);
-                return _mapper.Map<PagingResponse<ProfileDetailsResponse>>(list);
+                var result = _mapper.Map<PagingResponse<ProfileDetailsResponse>>(list);
+                result.FollowedByMe = currentUserFollowsProfile;
+                result.IsFollowingMe = profileFollowsCurrentUser;
+                return result;
             }
             catch (Exception e)
             {

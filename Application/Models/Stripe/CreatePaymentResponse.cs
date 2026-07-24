@@ -50,9 +50,12 @@ public class CreatePaymentResponse
     /// </summary>
     public decimal TotalProductCost { get; set; }
 
-    /// <summary>
-    /// The wallet transaction details for the buyer.
-    /// </summary>
+    public decimal VatAmount { get; set; }
+
+    public decimal? StripeProcessingFee { get; set; }
+
+    public decimal? NetOrderAmount { get; set; }
+
     public WalletTransactionResponse? WalletTransaction { get; set; }
 }
 

@@ -1,3 +1,4 @@
+using System.IO;
 using System.Threading.Tasks;
 
 namespace Core.Application.Interfaces
@@ -6,5 +7,6 @@ namespace Core.Application.Interfaces
     {
         Task<bool> IsFfmpegAvailableAsync();
         Task<string> ProcessImageAsync(string inputPath, string outputPath, int width, int height, string filterType);
+        Task<Stream> ProcessImageFromStreamAsync(Stream inputStream, int width, int height, string filterType);
     }
 }

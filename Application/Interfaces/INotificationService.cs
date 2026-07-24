@@ -34,5 +34,11 @@ namespace Core.Application.Interfaces
         Task SaveFollowRequestNotificationAsync(string requesterProfileUid, string targetProfileUid);
         Task SaveFollowRequestAcceptedNotificationAsync(string accepterUserId, string requesterUserId, string profileUid);
         Task SaveCollectionShareNotificationAsync(string senderUserId, string receiverUserId, string collectionUid, string message);
+
+        Task SaveRefundRequestNotificationAsync(int buyerProfileId, int sellerProfileId, string orderProductAffiliateUid);
+        Task SaveRefundApprovedNotificationAsync(int sellerProfileId, int buyerProfileId, string orderProductAffiliateUid);
+        Task SaveRefundRejectedNotificationAsync(int sellerProfileId, int buyerProfileId, string orderProductAffiliateUid);
+        Task SaveRefundDisputedNotificationAsync(int buyerProfileId, int? sellerProfileId, string orderProductAffiliateUid);
+        Task SaveRefundResolvedNotificationAsync(int adminProfileId, int buyerProfileId, int? sellerProfileId, string orderProductAffiliateUid);
     }
 } 

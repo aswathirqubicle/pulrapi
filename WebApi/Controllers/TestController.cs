@@ -50,39 +50,12 @@ namespace WebApi.Controllers
             return Ok("Pong");
         }
 
-        [HttpPost("reset-password")]
-        [AllowAnonymous]
-        public async Task<IActionResult> ResetPassword()
-        {
-            try
-            {
-                _logger.LogInformation("Reset password request for dule@pulr.com at {Time}", DateTime.UtcNow);
-                var user = await _userManager.FindByEmailAsync("dule@pulr.com");
-                if (user == null)
-                {
-                    _logger.LogWarning("User not found: dule@pulr.com");
-                    return NotFound("User not found");
-                }
-                _logger.LogInformation("Found user: {UserId}", user.Id);
-
-                var token = await _userManager.GeneratePasswordResetTokenAsync(user);
-                _logger.LogInformation("Generated password reset token");
-                var result = await _userManager.ResetPasswordAsync(user, token, "T3stko$");
-                if (result.Succeeded)
-                {
-                    _logger.LogInformation("Password reset successfully for dule@pulr.com");
-                    return Ok("Password reset successfully");
-                }
-
-                _logger.LogError("Password reset failed: {Errors}", string.Join(", ", result.Errors.Select(e => e.Description)));
-                return BadRequest(result.Errors);
-            }
-            catch (Exception ex)
-            {
-                _logger.LogError(ex, "Failed to reset password: {Message}", ex.Message);
-                return StatusCode(500, new { message = "Password reset failed", details = ex.Message, stackTrace = ex.StackTrace });
-            }
-        }
+#if DEBUG
+        // The destructive dev tooling below is compiled ONLY in local DEBUG builds.
+        // Deployment/publish uses the Release configuration, so these endpoints do not
+        // exist in any deployed binary regardless of the runtime ASPNETCORE_ENVIRONMENT
+        // value (which the deployment config forces to "Development"). The runtime
+        // IsDevelopment()/passcode checks below are kept purely as defense-in-depth.
 
         /// <summary>
         /// [DEV ONLY] Hard-deletes ALL posts for a given user, including their AWS S3 media files.
@@ -171,8 +144,10 @@ namespace WebApi.Controllers
                 return StatusCode(500, new { message = "Delete failed.", details = ex.Message });
             }
         }
+#endif
     }
 
+#if DEBUG
     public sealed class DeleteAllUserPostsRequest
     {
         /// <summary>Email or username of the user whose posts should be deleted.</summary>
@@ -187,4 +162,5 @@ namespace WebApi.Controllers
         /// <summary>Must match DevAccess:Passcode in appsettings.development.json.</summary>
         public string SecurityKey { get; set; }
     }
+#endif
 }

@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
+using Core.Application.Helpers;
 using Core.Application.Interfaces;
 using Core.Application.Mediatr.Products.Queries;
 using Core.Application.Mediatr.ShippingDetails.Queries;
@@ -16,12 +17,13 @@ using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using Core.Application.Models.Wallet;
+using Microsoft.Extensions.DependencyInjection;
 
 namespace Core.Application.Mediatr.Payments.Commands.Create;
 
 public class CreatePaymentCommand : IRequest<CreatePaymentResponse>
 {
-    public decimal Amount { get; set; }
+    public decimal? Amount { get; set; }
     public string Currency { get; set; }
     public string? PaymentMethodId { get; set; }
     public string? Note { get; set; }
@@ -37,6 +39,29 @@ public class CreatePaymentCommand : IRequest<CreatePaymentResponse>
     /// Required for 3D Secure redirect flows when Confirm = true.
     /// </summary>
     public string? ReturnUrl { get; set; }
+
+    /// <summary>
+    /// Optional CollabId to link this order to a collaboration.
+    /// </summary>
+    public string? CollabId { get; set; }
+
+    /// <summary>
+    /// When true, this is an exchange difference payment. The server recomputes the price
+    /// difference between the originally paid item(s) and the new combination(s) and charges
+    /// only the positive difference. <see cref="Products"/>/shipping are ignored in this mode.
+    /// </summary>
+    public bool IsExchange { get; set; }
+
+    /// <summary>
+    /// The original order UID (<c>Order.Uid</c>) the exchanged items belong to. Used for
+    /// ownership/consistency verification. Only relevant when <see cref="IsExchange"/> is true.
+    /// </summary>
+    public string? ExchangeOrderUid { get; set; }
+
+    /// <summary>
+    /// The items being exchanged. Only relevant when <see cref="IsExchange"/> is true.
+    /// </summary>
+    public List<ExchangeItemRequest> ExchangeItems { get; set; } = new();
 }
 
 
@@ -49,6 +74,8 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
     private readonly ILogger<CreatePaymentCommandHandler> _logger;
     private readonly IEmailService _emailService;
     private readonly IOrderService _orderService;
+    private readonly IServiceScopeFactory _serviceScopeFactory;
+    private readonly ISettingsCacheService _settingsCacheService;
 
     public CreatePaymentCommandHandler(
         IStripeService stripeService,
@@ -57,7 +84,9 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
         IApplicationDbContext dbContext,
         ILogger<CreatePaymentCommandHandler> logger,
         IEmailService emailService,
-        IOrderService orderService)
+        IOrderService orderService,
+        IServiceScopeFactory serviceScopeFactory,
+        ISettingsCacheService settingsCacheService)
     {
         _stripeService = stripeService;
         _mediator = mediator;
@@ -66,11 +95,20 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
         _logger = logger;
         _emailService = emailService;
         _orderService = orderService;
+        _serviceScopeFactory = serviceScopeFactory;
+        _settingsCacheService = settingsCacheService;
     }
 
 
     public async Task<CreatePaymentResponse> Handle(CreatePaymentCommand request, CancellationToken cancellationToken)
     {
+        // Exchange difference payments follow a separate path: recompute the price difference
+        // server-side and charge only the positive difference. No new order is created here.
+        if (request.IsExchange)
+        {
+            return await HandleExchangePaymentAsync(request, cancellationToken);
+        }
+
         CheckoutSummaryResponse? checkoutSummary = null;
 
         try
@@ -113,7 +151,7 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
         {
             var paymentRequest = new CreatePaymentRequest
             {
-                Amount = request.Amount,
+                Amount = checkoutSummary.Amount,
                 Currency = request.Currency,
                 PaymentMethodId = request.PaymentMethodId,
                 Note = request.Note,
@@ -144,6 +182,9 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
             paymentResponse.DeliveryTime = checkoutSummary?.DeliveryTime;
             paymentResponse.TotalShippingCost = checkoutSummary?.TotalShippingCost ?? 0;
             paymentResponse.TotalProductCost = checkoutSummary?.TotalProductCost ?? 0;
+            paymentResponse.VatAmount = checkoutSummary?.VatAmount ?? 0;
+            paymentResponse.StripeProcessingFee = checkoutSummary?.StripeProcessingFee;
+            paymentResponse.NetOrderAmount = checkoutSummary?.NetOrderAmount;
 
             // Add full order details with item-level statuses if order was saved
             if (!string.IsNullOrWhiteSpace(checkoutSummary?.OrderId))
@@ -179,10 +220,247 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                 CheckoutSummary = checkoutSummary,
                 DeliveryTime = checkoutSummary?.DeliveryTime,
                 TotalShippingCost = checkoutSummary?.TotalShippingCost ?? 0,
-                TotalProductCost = checkoutSummary?.TotalProductCost ?? 0
+                TotalProductCost = checkoutSummary?.TotalProductCost ?? 0,
+                VatAmount = checkoutSummary?.VatAmount ?? 0,
+                StripeProcessingFee = checkoutSummary?.StripeProcessingFee,
+                NetOrderAmount = checkoutSummary?.NetOrderAmount
             };
         }
     }
+
+    /// <summary>
+    /// Handles an exchange difference payment. The client sends identifiers only; the server
+    /// recomputes the difference between the originally paid price (from the order snapshot) and
+    /// the new combination's current price. It charges only when the difference is positive and
+    /// never creates a new order (the "real exchange process" is handled elsewhere).
+    /// </summary>
+    private async Task<CreatePaymentResponse> HandleExchangePaymentAsync(CreatePaymentCommand request, CancellationToken cancellationToken)
+    {
+        try
+        {
+            if (request.ExchangeItems == null || request.ExchangeItems.Count == 0)
+            {
+                return new CreatePaymentResponse { Success = false, Error = "At least one exchange item is required." };
+            }
+
+            // Resolve current user + profile for ownership checks.
+            var user = await _currentUserService.GetUserAsync(skipDetails: true);
+            if (user == null)
+            {
+                return new CreatePaymentResponse { Success = false, Error = "Authentication required: unable to verify user identity." };
+            }
+
+            var profile = await _dbContext.Profiles
+                .FirstOrDefaultAsync(p => p.UserId == user.Id, cancellationToken);
+            if (profile == null)
+            {
+                return new CreatePaymentResponse { Success = false, Error = "Profile not found for the current user." };
+            }
+
+            // Load the original purchased line items (sub-orders) with their order for ownership verification.
+            var productOrderUids = request.ExchangeItems.Select(i => i.ProductOrderUid).ToList();
+            var orderItems = await _dbContext.OrderProductAffiliates
+                .Include(opa => opa.Order)
+                .Include(opa => opa.Product)
+                .Where(opa => productOrderUids.Contains(opa.Uid) && opa.IsActive)
+                .ToListAsync(cancellationToken);
+
+            // Load the new variant combinations (the trusted price source).
+            var newCombinationUids = request.ExchangeItems.Select(i => i.NewVariantCombinationUid).ToList();
+            var newCombinations = await _dbContext.ProductVariantCombinations
+                .Include(vc => vc.Product)
+                .Where(vc => newCombinationUids.Contains(vc.Uid) && vc.IsActive)
+                .ToListAsync(cancellationToken);
+
+            decimal totalDifference = 0m;
+            var itemDifferences = new List<(OrderProductAffiliate OrderItem, decimal Difference)>();
+
+            foreach (var item in request.ExchangeItems)
+            {
+                var orderItem = orderItems.FirstOrDefault(opa => opa.Uid == item.ProductOrderUid);
+                if (orderItem == null)
+                {
+                    return new CreatePaymentResponse { Success = false, Error = $"Order item {item.ProductOrderUid} not found." };
+                }
+
+                // Ownership: the order must belong to the current user.
+                if (orderItem.Order == null || orderItem.Order.ProfileId != profile.Id)
+                {
+                    return new CreatePaymentResponse { Success = false, Error = "You are not authorized to exchange this item." };
+                }
+
+                // Consistency: if a specific order was provided, the item must belong to it.
+                if (!string.IsNullOrWhiteSpace(request.ExchangeOrderUid) &&
+                    !string.Equals(orderItem.Order.Uid, request.ExchangeOrderUid, StringComparison.Ordinal))
+                {
+                    return new CreatePaymentResponse { Success = false, Error = $"Order item {item.ProductOrderUid} does not belong to order {request.ExchangeOrderUid}." };
+                }
+
+                var newCombination = newCombinations.FirstOrDefault(vc => vc.Uid == item.NewVariantCombinationUid);
+                if (newCombination == null)
+                {
+                    return new CreatePaymentResponse { Success = false, Error = $"New variant combination {item.NewVariantCombinationUid} not found." };
+                }
+
+                // Optional sanity-check: the new combination must belong to the supplied product.
+                if (!string.IsNullOrWhiteSpace(item.NewProductUid) &&
+                    !string.Equals(newCombination.Product?.Uid, item.NewProductUid, StringComparison.Ordinal))
+                {
+                    return new CreatePaymentResponse { Success = false, Error = $"Variant combination {item.NewVariantCombinationUid} does not belong to product {item.NewProductUid}." };
+                }
+
+                // Trusted prices: old from the order snapshot, new from the catalog (fallback to product MinPrice).
+                var oldUnitPrice = orderItem.ProductPriceSnapshot ?? 0m;
+                var newUnitPrice = newCombination.Price
+                    ?? (newCombination.Product?.MinPrice.HasValue == true ? (decimal)newCombination.Product.MinPrice.Value : 0m);
+
+                // Clamp quantity to what was originally purchased — cannot inflate the charge.
+                var qty = Math.Clamp(item.Quantity, 1, Math.Max(1, orderItem.ProductQuantity));
+
+                var itemDifference = (newUnitPrice - oldUnitPrice) * qty;
+                totalDifference += itemDifference;
+                itemDifferences.Add((orderItem, itemDifference));
+            }
+
+            var primaryOrder = itemDifferences[0].OrderItem.Order;
+
+            if (totalDifference == 0m)
+            {
+                // No price difference: nothing to charge or credit on either side.
+                return new CreatePaymentResponse
+                {
+                    Success = true,
+                    TotalProductCost = 0m,
+                    NetOrderAmount = 0m
+                };
+            }
+
+            if (totalDifference > 0m)
+            {
+                // Charge the positive difference plus VAT (matching normal checkout, where VAT is
+                // applied on top of the product cost and kept entirely by the platform — sellers
+                // are only ever credited their product-price share, never the VAT portion).
+                var platformSettings = await _settingsCacheService.GetPlatformSettingsAsync();
+                var vatRate = platformSettings?.VatRate ?? 0.05m;
+                var vatAmount = totalDifference * vatRate;
+                var chargeableAmount = totalDifference + vatAmount;
+
+                var paymentRequest = new CreatePaymentRequest
+                {
+                    Amount = chargeableAmount,
+                    Currency = request.Currency,
+                    PaymentMethodId = request.PaymentMethodId,
+                    Note = request.Note,
+                    OrderId = request.ExchangeOrderUid,
+                    ReturnUrl = request.ReturnUrl
+                };
+
+                var paymentResponse = await _stripeService.CreatePaymentAsync(paymentRequest);
+                paymentResponse.Success = true;
+                paymentResponse.Error = null;
+                paymentResponse.TotalProductCost = totalDifference;
+                paymentResponse.VatAmount = vatAmount;
+                paymentResponse.NetOrderAmount = chargeableAmount;
+
+                await RecordExchangeWalletTransactionsAsync(
+                    profile.Id, primaryOrder, itemDifferences,
+                    buyerType: TransactionTypeEnum.ExchangeCharge,
+                    sellerType: TransactionTypeEnum.ExchangeCredit,
+                    buyerAmount: chargeableAmount, cancellationToken);
+
+                return paymentResponse;
+            }
+            else
+            {
+                // Cheaper exchange: no Stripe charge — credit the buyer's wallet with the
+                // difference and debit the seller(s) accordingly. No VAT adjustment on credits.
+                var creditAmount = Math.Abs(totalDifference);
+
+                await RecordExchangeWalletTransactionsAsync(
+                    profile.Id, primaryOrder, itemDifferences,
+                    buyerType: TransactionTypeEnum.ExchangeCredit,
+                    sellerType: TransactionTypeEnum.ExchangeCharge,
+                    buyerAmount: creditAmount, cancellationToken);
+
+                return new CreatePaymentResponse
+                {
+                    Success = true,
+                    TotalProductCost = totalDifference,
+                    NetOrderAmount = totalDifference
+                };
+            }
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error processing exchange payment: {Message}", ex.Message);
+            return new CreatePaymentResponse { Success = false, Error = ex.Message };
+        }
+    }
+
+    /// <summary>
+    /// Records the buyer's aggregate exchange transaction and each affected seller's share.
+    /// <paramref name="buyerAmount"/> is the buyer-facing magnitude (VAT-inclusive when charging,
+    /// plain product-price difference when crediting); seller shares are always VAT-exclusive,
+    /// derived independently from <paramref name="itemDifferences"/>. <paramref name="buyerType"/>/
+    /// <paramref name="sellerType"/> determine credit vs. debit direction per party (buyer and
+    /// seller always take opposite directions for the same event).
+    /// </summary>
+    private async Task RecordExchangeWalletTransactionsAsync(
+            int buyerProfileId,
+            Order primaryOrder,
+            List<(OrderProductAffiliate OrderItem, decimal Difference)> itemDifferences,
+            TransactionTypeEnum buyerType,
+            TransactionTypeEnum sellerType,
+            decimal buyerAmount,
+            CancellationToken cancellationToken)
+        {
+            var transactionsToAdd = new List<WalletTransaction>
+            {
+                new WalletTransaction
+                {
+                    ProfileId = buyerProfileId,
+                    TransactionType = buyerType,
+                    Amount = buyerType == TransactionTypeEnum.ExchangeCharge ? -Math.Abs(buyerAmount) : Math.Abs(buyerAmount),
+                    CurrencyId = primaryOrder.CurrencyId,
+                    OrderId = primaryOrder.Id,
+                    OrderProductAffiliateId = itemDifferences.Count == 1 ? itemDifferences[0].OrderItem.Id : (int?)null,
+                    Description = primaryOrder.Uid,
+                    TransactionDate = DateTime.UtcNow,
+                    Status = TransactionStatusEnum.Completed
+                }
+            };
+
+            var sellerGroups = itemDifferences
+                .Where(x => x.OrderItem.Product?.UserId != null)
+                .GroupBy(x => x.OrderItem.Product.UserId);
+
+            foreach (var sellerGroup in sellerGroups)
+            {
+                var sellerShare = sellerGroup.Sum(x => x.Difference);
+                if (sellerShare == 0m) continue;
+
+                var sellerProfile = await _dbContext.Profiles
+                    .FirstOrDefaultAsync(p => p.UserId == sellerGroup.Key, cancellationToken);
+                if (sellerProfile == null) continue;
+
+                var sellerItems = sellerGroup.ToList();
+                transactionsToAdd.Add(new WalletTransaction
+                {
+                    ProfileId = sellerProfile.Id,
+                    TransactionType = sellerType,
+                    Amount = sellerType == TransactionTypeEnum.ExchangeCharge ? -Math.Abs(sellerShare) : Math.Abs(sellerShare),
+                    CurrencyId = primaryOrder.CurrencyId,
+                    OrderId = primaryOrder.Id,
+                    OrderProductAffiliateId = sellerItems.Count == 1 ? sellerItems[0].OrderItem.Id : (int?)null,
+                    Description = primaryOrder.Uid,
+                    TransactionDate = DateTime.UtcNow,
+                    Status = TransactionStatusEnum.Completed
+                });
+            }
+
+            _dbContext.WalletTransactions.AddRange(transactionsToAdd);
+            await _dbContext.SaveChangesAsync(cancellationToken);
+        }
 
     private async Task<CheckoutSummaryResponse> BuildCheckoutSummaryAsync(CreatePaymentCommand request, CancellationToken cancellationToken)
     {
@@ -374,7 +652,6 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
             ? await _mediator.Send(new GetDefaultShippingAddressQuery { IsBillingAddress = false }, cancellationToken)
             : await _mediator.Send(new GetShippingAddressQuery { Uid = request.ShippingDetailsUid }, cancellationToken);
 
-        // Get billing address if specified, otherwise use default billing or null (will fall back to shipping)
         ShippingDetailsResponse? billingResponse = null;
         if (!string.IsNullOrWhiteSpace(request.BillingDetailsUid))
         {
@@ -382,20 +659,17 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
         }
         else
         {
-            // Try to get default billing address
             try
             {
                 billingResponse = await _mediator.Send(new GetDefaultShippingAddressQuery { IsBillingAddress = true }, cancellationToken);
             }
             catch
             {
-                // No default billing address found, will use shipping address
                 billingResponse = null;
             }
         }
 
-        // Build payment response
-        CheckoutPaymentResponse? payment = null;
+        CheckoutPaymentResponse? payment;
         if (!string.IsNullOrWhiteSpace(request.PaymentMethodId))
         {
             var paymentMethod = await _stripeService.GetPaymentMethodAsync(request.PaymentMethodId);
@@ -418,7 +692,6 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
         }
         else
         {
-            // No PaymentMethodId means it's cash on delivery
             payment = new CheckoutPaymentResponse
             {
                 Brand = string.Empty,
@@ -432,17 +705,27 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
             {
                 return ss.ShippingCosts ?? 0;
             }
-            return 0; // Default shipping cost is 0 if seller hasn't set it
+            return 0;
         });
+
+        var platformSettings = await _settingsCacheService.GetPlatformSettingsAsync();
+        var vatRate = platformSettings?.VatRate ?? 0.05m;
+        var vatAmount = (totalProductCost + totalShippingCost) * vatRate;
+
+        var netOrderAmount = totalProductCost + totalShippingCost + vatAmount;
 
         return new CheckoutSummaryResponse
         {
             OrderId = orderId,
-            Amount = request.Amount,
+            Amount = netOrderAmount,
             Currency = request.Currency,
             TotalProducts = products.Count,
             TotalShippingCost = totalShippingCost,
             TotalProductCost = totalProductCost,
+            VatAmount = vatAmount,
+            VatRate = vatRate,
+            StripeProcessingFee = null,
+            NetOrderAmount = netOrderAmount,
             Products = products,
             Payment = payment,
             ShippingDetails = shippingResponse,
@@ -530,6 +813,17 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
             var orderProductAffiliates = new List<OrderProductAffiliate>();
             var variantCombinationsToUpdate = new List<(ProductVariantCombination variantCombination, int quantityToDecrease)>();
 
+            var productUids = checkoutSummary.Products.Select(p => p.Uid).ToList();
+            var productIds = await _dbContext.Products
+                .Where(p => productUids.Contains(p.Uid))
+                .Select(p => new { p.Uid, p.Id })
+                .ToListAsync(cancellationToken);
+            var productIdDict = productIds.ToDictionary(p => p.Uid, p => p.Id);
+
+            var bagItems = await _dbContext.UserBagProducts
+                .Where(ubp => ubp.UserId == user.Id && productIdDict.Values.Contains(ubp.BagProductId))
+                .ToListAsync(cancellationToken);
+
             foreach (var productSummary in checkoutSummary.Products)
             {
                 // Load product with all related data to capture complete snapshot
@@ -545,7 +839,7 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                         .ThenInclude(u => u.Profile)
                     .FirstOrDefaultAsync(p => p.Uid == productSummary.Uid, cancellationToken);
 
-                if (product == null)
+if (product == null)
                 {
                     continue;
                 }
@@ -560,15 +854,14 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                     };
                 }
 
-                // Remove the product from the user's bag
-                var bagItem = await _dbContext.UserBagProducts
-                    .FirstOrDefaultAsync(ubp => ubp.UserId == user.Id && 
-                                               ubp.BagProductId == product.Id && 
-                                               (string.IsNullOrEmpty(productSummary.ProductVariantCombinationUid) 
-                                                   ? string.IsNullOrEmpty(ubp.ProductVariantCombinationUid)
-                                                   : ubp.ProductVariantCombinationUid == productSummary.ProductVariantCombinationUid), 
-                                               cancellationToken);
-                
+                // Remove the product from the user's bag (use cached bag items for performance)
+                productIdDict.TryGetValue(productSummary.Uid, out var productId);
+                var bagItem = bagItems.FirstOrDefault(ubp =>
+                    ubp.BagProductId == productId &&
+                    (string.IsNullOrEmpty(productSummary.ProductVariantCombinationUid)
+                        ? string.IsNullOrEmpty(ubp.ProductVariantCombinationUid)
+                        : ubp.ProductVariantCombinationUid == productSummary.ProductVariantCombinationUid));
+
                 if (bagItem != null)
                 {
                     _dbContext.UserBagProducts.Remove(bagItem);
@@ -653,7 +946,10 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
 
             var order = new Order
             {
-                Amount = request.Amount,
+                Amount = checkoutSummary.NetOrderAmount,
+                GrossAmount = null,
+                StripeFeeAmount = 0,
+                VatAmount = checkoutSummary.VatAmount,
                 Note = request.Note,
                 StripePaymentMethodId = request.PaymentMethodId,
                 Currency = currency,
@@ -663,7 +959,9 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                 BillingDetails = billingDetails,
                 OrderProductAffiliates = orderProductAffiliates,
                 OrderStatus = OrderStatusEnum.Pending, // Initial status is Pending
-                RawRequest = paymentResponse.PaymentIntentId ?? string.Empty
+                RawRequest = paymentResponse.PaymentIntentId ?? string.Empty,
+                StripePaymentIntentId = paymentResponse.PaymentIntentId,
+                CollabId = request.CollabId
             };
 
             _dbContext.Orders.Add(order);
@@ -672,24 +970,17 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
             foreach (var (variantCombination, quantityToDecrease) in variantCombinationsToUpdate)
             {
                 variantCombination.Quantity = Math.Max(0, variantCombination.Quantity - quantityToDecrease);
-
                 if (variantCombination.Quantity == 0)
                 {
                     variantCombination.IsAvailable = false;
                 }
             }
 
-            if (variantCombinationsToUpdate.Any())
-            {
-                await _dbContext.SaveChangesAsync(cancellationToken);
-            }
-
-            // Set orderId in "P{sequentialId}" format (e.g., "P001") and save to database Uid
-            var formattedOrderId = $"P{order.Id:D3}";
+            // Non-guessable, non-sequential public order id to prevent IDOR enumeration.
+            var formattedOrderId = OrderUidGenerator.Generate();
             order.Uid = formattedOrderId;
             checkoutSummary.OrderId = formattedOrderId;
 
-            // Update individual product order IDs (P001-01, P001-02, etc.)
             int productIndex = 1;
             foreach (var opa in order.OrderProductAffiliates)
             {
@@ -697,16 +988,14 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                 productIndex++;
             }
 
-            // Save the updated Uids back to database
-            await _dbContext.SaveChangesAsync(cancellationToken);
-
-            // Update CheckoutSummary products with their ProductOrderUid
             productIndex = 1;
             foreach (var productSummary in checkoutSummary.Products)
             {
                 productSummary.ProductOrderUid = $"{formattedOrderId}-{productIndex:D2}";
                 productIndex++;
             }
+
+            await _dbContext.SaveChangesAsync(cancellationToken);
 
             // Load all necessary navigation properties for email sending
             var orderWithDetails = await _dbContext.Orders
@@ -725,19 +1014,24 @@ public class CreatePaymentCommandHandler : IRequestHandler<CreatePaymentCommand,
                             .ThenInclude(pmf => pmf.MediaFile)
                 .FirstOrDefaultAsync(o => o.Id == order.Id, cancellationToken);
 
-            // Send order confirmation emails to buyer and sellers
+            // Send order confirmation emails in background (don't block payment response)
             if (orderWithDetails != null)
             {
-                try
+                var orderIdForLog = formattedOrderId;
+                _ = Task.Run(async () =>
                 {
-                    await _emailService.SendOrderConfirmationEmailsAsync(orderWithDetails);
-                    _logger.LogInformation("Order confirmation emails sent for order {OrderId}", formattedOrderId);
-                }
-                catch (Exception emailEx)
-                {
-                    _logger.LogError(emailEx, "Failed to send order confirmation emails for order {OrderId}", formattedOrderId);
-                    // Don't fail the order creation if email sending fails
-                }
+                    try
+                    {
+                        using var scope = _serviceScopeFactory.CreateScope();
+                        var emailService = scope.ServiceProvider.GetRequiredService<IEmailService>();
+                        await emailService.SendOrderConfirmationEmailsAsync(orderWithDetails);
+                        _logger.LogInformation("Order confirmation emails sent for order {OrderId}", orderIdForLog);
+                    }
+                    catch (Exception emailEx)
+                    {
+                        _logger.LogError(emailEx, "Failed to send order confirmation emails for order {OrderId}", orderIdForLog);
+                    }
+                });
             }
 
             // Create wallet transactions for buyer and sellers

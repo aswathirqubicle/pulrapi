@@ -1,11 +1,10 @@
-﻿using AutoMapper;
+using AutoMapper;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
 using Core.Application.Models;
 using Core.Application.Models.Profiles;
 using Core.Application.Models.Stores;
 using Core.Domain.Entities;
-using Core.Domain.Views;
 using MediatR;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
@@ -14,7 +13,6 @@ using System.ComponentModel.DataAnnotations;
 using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
-using System.Collections.Generic; // Added for List<string>
 
 namespace Core.Application.Mediatr.Profiles.Queries
 {
@@ -31,8 +29,8 @@ namespace Core.Application.Mediatr.Profiles.Queries
         private readonly ICurrentUserService _currentUserService;
         private readonly IMapper _mapper;
 
-        public GetProfileFollowingsQueryHandler(IApplicationDbContext dbContext, 
-            ILogger<GetProfileFollowingsQueryHandler> logger, 
+        public GetProfileFollowingsQueryHandler(IApplicationDbContext dbContext,
+            ILogger<GetProfileFollowingsQueryHandler> logger,
             ICurrentUserService currentUserService,
             IMapper mapper)
         {
@@ -47,71 +45,103 @@ namespace Core.Application.Mediatr.Profiles.Queries
             try
             {
                 var cUser = await _currentUserService.GetUserAsync();
+                var currentProfileId = cUser?.Profile?.Id;
+                var currentProfileUid = cUser?.Profile?.Uid;
+                var dateTimeNow = DateTime.UtcNow;
 
                 var profile = await _dbContext.Profiles
                     .Include(p => p.User)
+                    .Include(p => p.ProfileSettings)
                     .FirstOrDefaultAsync(p => p.Uid == request.ProfileUid, cancellationToken);
+
                 if (profile == null)
                 {
                     profile = await _dbContext.Profiles
                         .Include(p => p.User)
+                        .Include(p => p.ProfileSettings)
                         .FirstOrDefaultAsync(p => p.User.UserName.ToLower() == request.ProfileUid.ToLower(), cancellationToken);
                 }
+
                 if (profile == null)
                 {
                     throw new BadRequestException("Profile doesn't exist");
                 }
 
-                // 1. Get followed Profile IDs
-                var followedProfileIds = await _dbContext.ProfileFollowers
-                    .AsNoTracking()
-                    .Where(pf => pf.FollowerId == profile.Id)
-                    .Select(pf => pf.ProfileId)
-                    .ToListAsync(cancellationToken);
+                bool isProfilePublic = profile.ProfileSettings == null || profile.ProfileSettings.IsProfilePublic;
 
-                // 2. Fetch profiles, including user navigation
-                var followingProfiles = await _dbContext.Profiles
-                    .Where(p => followedProfileIds.Contains(p.Id))
-                    .Include(p => p.User)
-                    .Include(p => p.ProfileFollowers)
-                    .Include(p => p.ProfileFollowings)
-                    .AsNoTracking()
-                    .ToListAsync(cancellationToken);
+                bool currentUserFollowsProfile = currentProfileId.HasValue &&
+                    await _dbContext.ProfileFollowers.AnyAsync(
+                        pf => pf.ProfileId == profile.Id && pf.FollowerId == currentProfileId.Value, cancellationToken);
+                bool profileFollowsCurrentUser = currentProfileId.HasValue &&
+                    await _dbContext.ProfileFollowers.AnyAsync(
+                        pf => pf.ProfileId == currentProfileId.Value && pf.FollowerId == profile.Id, cancellationToken);
 
-                // 3. Project each profile, manually ensuring visibility of all fields; fallback for debug if User is null
-                var mappedProfiles = followingProfiles.Select(p => new ProfileDetailsResponse
+                if (!isProfilePublic)
                 {
-                    FirstName    = p.User?.FirstName    ?? "NO_USER",
-                    LastName     = p.User?.LastName     ?? "NO_USER",
-                    DisplayName  = p.User?.DisplayName  ?? "NO_USER",
-                    Username     = p.User?.UserName     ?? "NO_USER",
-                    FullName     = p.User?.FirstName ?? "NO_USER",
-                    Uid          = p.Uid,
-                    ImageUrl     = p.ImageUrl,
-                    About        = p.About,
-                    PhoneNumber  = p.User?.PhoneNumber,
-                    IsProfilePublic = false,
-                    Gender       = p.Gender?.Key,
-                    Location     = p.User?.Country != null ? p.User.Country.Name : p.Location,
-                    UserType     = p.UserType,
-                    WebsiteUrl   = p.ProfileSocialMedia?.WebsiteUrl,
-                    InstagramUrl = p.ProfileSocialMedia?.InstagramUrl,
-                    FacebookUrl  = p.ProfileSocialMedia?.FacebookUrl,
-                    TwitterUrl   = p.ProfileSocialMedia?.TwitterUrl,
-                    TikTokUrl    = p.ProfileSocialMedia?.TikTokUrl,
-                    SocialMediaLinks = p.ProfileSocialMediaLinks != null ? p.ProfileSocialMediaLinks.Select(sml => new ProfileSocialMediaLinkDto { /* map as needed */ }).ToList() : new List<ProfileSocialMediaLinkDto>(),
-                    Email            = p.User?.Email,
-                    Followers        = p.ProfileFollowers?.Count ?? 0,
-                    Following        = p.ProfileFollowings?.Count ?? 0,
-                    IsStore          = false,
-                    CreatedAt        = p.CreatedAt,
-                    // Copy any extra fields you need
-                });
+                    bool isOwner = currentProfileId.HasValue && profile.Id == currentProfileId.Value;
+                    if (!isOwner && !currentUserFollowsProfile)
+                        throw new ForbiddenException("This profile is private.");
+                }
 
-                // 4. Page in-memory
-                var combined = mappedProfiles.OrderByDescending(x => x.CreatedAt).ToList();
-                var pagedList = PagedList<ProfileDetailsResponse>.ToPagedList(combined, request.PageNumber, request.PageSize);
-                return _mapper.Map<PagingResponse<ProfileDetailsResponse>>(pagedList);
+                var followingsQuery = _dbContext.ProfileFollowers
+                    .Where(pf => pf.FollowerId == profile.Id && pf.Profile.IsActive)
+                    .Select(pf => new ProfileDetailsResponse
+                    {
+                        Uid          = pf.Profile.Uid,
+                        FullName     = pf.Profile.User.FirstName,
+                        FirstName    = pf.Profile.User.FirstName,
+                        LastName     = pf.Profile.User.LastName,
+                        Username     = pf.Profile.User.UserName,
+                        ImageUrl     = pf.Profile.ImageUrl,
+                        Followers    = pf.Profile.ProfileFollowers.Count(),
+                        Following    = pf.Profile.ProfileFollowings.Count(),
+                        PostsCount   = pf.Profile.User.Posts.Count(post => post.IsActive),
+                        About        = pf.Profile.About,
+                        Location     = pf.Profile.Location,
+                        IsProfilePublic = pf.Profile.ProfileSettings == null || pf.Profile.ProfileSettings.IsProfilePublic,
+                        WebsiteUrl   = pf.Profile.ProfileSocialMedia.WebsiteUrl,
+                        InstagramUrl = pf.Profile.ProfileSocialMedia.InstagramUrl,
+                        FacebookUrl  = pf.Profile.ProfileSocialMedia.FacebookUrl,
+                        TwitterUrl   = pf.Profile.ProfileSocialMedia.TwitterUrl,
+                        TikTokUrl    = pf.Profile.ProfileSocialMedia.TikTokUrl,
+                        ActiveStoriesCount = cUser != null
+                            ? pf.Profile.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow && !story.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id))
+                            : pf.Profile.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow),
+                        StoriesSeenCount = pf.Profile.User.Stories
+                            .Where(story => story.IsActive && story.StoryExpiresIn > dateTimeNow)
+                            .SelectMany(story => story.StorySeens)
+                            .Select(seen => seen.SeenById)
+                            .Distinct()
+                            .Count(),
+                        UnseenStoriesCount = cUser != null
+                            ? pf.Profile.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow && !story.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id))
+                            : pf.Profile.User.Stories.Count(story => story.IsActive && story.StoryExpiresIn > dateTimeNow),
+                        FollowedByMe = currentProfileId.HasValue &&
+                            pf.Profile.ProfileFollowers.Any(pf2 => pf2.FollowerId == currentProfileId.Value),
+                        IsFollowingMe = currentProfileId.HasValue &&
+                            pf.Profile.ProfileFollowings.Any(pf2 => pf2.ProfileId == currentProfileId.Value),
+                        FollowRequestSent = currentProfileUid != null && _dbContext.FollowRequests
+                            .Any(fr => fr.RequesterProfileId == currentProfileUid
+                                    && fr.TargetProfileId == pf.Profile.Uid
+                                    && fr.IsActive),
+                        CanFollowBack = currentProfileId.HasValue &&
+                            pf.Profile.ProfileFollowings.Any(pf2 => pf2.ProfileId == currentProfileId.Value) &&
+                            !pf.Profile.ProfileFollowers.Any(pf2 => pf2.FollowerId == currentProfileId.Value),
+                        Stores = pf.Profile.User.Stores.Select(s => new StoreDetailsResponse
+                        {
+                            Followers  = s.StoreFollowers.Count(),
+                            Name       = s.Name,
+                            ImageUrl   = s.ImageUrl,
+                            Uid        = s.Uid,
+                            UniqueName = s.UniqueName
+                        }).ToList()
+                    });
+
+                var list = await PagedList<ProfileDetailsResponse>.ToPagedListAsync(followingsQuery, request.PageNumber, request.PageSize);
+                var result = _mapper.Map<PagingResponse<ProfileDetailsResponse>>(list);
+                result.FollowedByMe = currentUserFollowsProfile;
+                result.IsFollowingMe = profileFollowsCurrentUser;
+                return result;
             }
             catch (Exception e)
             {

@@ -518,16 +518,17 @@ namespace Core.Infrastructure.Services
                 {
                     _dbContext.ProfileFollowers.Remove(pfm);
 
-                    var notification = await _dbContext.NotificationHistories
-                        .FirstOrDefaultAsync(n =>
+                    var notifications = await _dbContext.NotificationHistories
+                        .Where(n =>
                             n.TargetId == profileUid &&
                             n.TargetType == EntityTypeEnum.PROFILE &&
                             n.ActionType == NotificationActionTypeEnum.Follow &&
-                            n.ActorUserId == cUser.Profile.Id);
+                            n.ActorUserId == cUser.Profile.Id)
+                        .ToListAsync();
 
-                    if (notification != null)
+                    if (notifications.Any())
                     {
-                        _dbContext.NotificationHistories.Remove(notification);
+                        _dbContext.NotificationHistories.RemoveRange(notifications);
                     }
                 }
                 else
@@ -729,16 +730,17 @@ namespace Core.Infrastructure.Services
                     // Unfollow
                     _dbContext.ProfileFollowers.Remove(existingFollow);
 
-                    var notification = await _dbContext.NotificationHistories
-                        .FirstOrDefaultAsync(n =>
+                    var followNotifications = await _dbContext.NotificationHistories
+                        .Where(n =>
                             n.TargetId == targetProfileUid &&
                             n.TargetType == EntityTypeEnum.PROFILE &&
                             n.ActionType == NotificationActionTypeEnum.Follow &&
-                            n.ActorUserId == cUser.Profile.Id);
+                            n.ActorUserId == cUser.Profile.Id)
+                        .ToListAsync();
 
-                    if (notification != null)
+                    if (followNotifications.Any())
                     {
-                        _dbContext.NotificationHistories.Remove(notification);
+                        _dbContext.NotificationHistories.RemoveRange(followNotifications);
                     }
 
                     await _dbContext.SaveChangesAsync(CancellationToken.None);
@@ -748,23 +750,24 @@ namespace Core.Infrastructure.Services
                 // Check if follow request already exists
                 var existingRequest = await _dbContext.FollowRequests
                     .FirstOrDefaultAsync(fr => fr.RequesterProfileId == cUser.Profile.Uid && fr.TargetProfileId == targetProfileUid && fr.IsActive);
-                
+
                 if (existingRequest != null)
                 {
                     // Cancel the follow request
                     existingRequest.IsActive = false;
 
-                    // Remove the follow request notification
-                    var notification = await _dbContext.NotificationHistories
-                        .FirstOrDefaultAsync(n =>
+                    // Remove all matching follow request notifications
+                    var requestNotifications = await _dbContext.NotificationHistories
+                        .Where(n =>
                             n.TargetId == targetProfileUid &&
                             n.TargetType == EntityTypeEnum.PROFILE &&
                             n.ActionType == NotificationActionTypeEnum.FollowRequest &&
-                            n.ActorUserId == cUser.Profile.Id);
+                            n.ActorUserId == cUser.Profile.Id)
+                        .ToListAsync();
 
-                    if (notification != null)
+                    if (requestNotifications.Any())
                     {
-                        _dbContext.NotificationHistories.Remove(notification);
+                        _dbContext.NotificationHistories.RemoveRange(requestNotifications);
                     }
 
                     await _dbContext.SaveChangesAsync(CancellationToken.None);

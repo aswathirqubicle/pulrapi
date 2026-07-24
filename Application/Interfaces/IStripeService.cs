@@ -16,4 +16,6 @@ public interface IStripeService
     Task<bool> SetDefaultPaymentMethodAsync(string paymentMethodId);
     Task<SetupIntentResponse> CreateSetupIntentAsync();
     Task<bool> HandleWebhookAsync(string json, string stripeSignature);
+    Task<RefundResponse> CreateRefundAsync(RefundRequest request);
+    Task<TransferReversalResponse> ReverseTransferAsync(ReverseTransferRequest request);
 }

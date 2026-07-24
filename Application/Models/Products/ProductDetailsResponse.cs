@@ -29,4 +29,5 @@ public class ProductDetailsResponse
     public ProfileBaseResponse Profile { get; set; }
     public bool InWishlist { get; set; }
     public bool IsDeletable { get; set; } = true;
+    public string? CollabId { get; set; }
 }

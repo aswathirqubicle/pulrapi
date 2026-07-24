@@ -2,6 +2,15 @@ using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Threading.Tasks;
+using System.ComponentModel.DataAnnotations;
+using Core.Application.Mediatr.Orders.Commands.RefundInitiate;
+using Core.Application.Mediatr.Orders.Commands.RefundApprove;
+using Core.Application.Mediatr.Orders.Commands.RefundReject;
+using Core.Application.Mediatr.Orders.Commands.UpdateShippingDetails;
+using Core.Application.Mediatr.Orders.Queries.GetSellerRefundDisputeDetail;
+using Core.Application.Mediatr.Orders.Queries.GetOrderRefundRequests;
+using Core.Application.Mediatr.Orders.Queries.GetRefundRequestsList;
+using Core.Application.Mediatr.Orders.Queries.GetShippingDetails;
 using Core.Application.Mediatr.Orders.Queries;
 using Core.Application.Models;
 using Core.Application.Models.Orders;
@@ -19,7 +28,7 @@ public class OrdersController : ApiControllerBase
     /// Returns paginated list of all orders placed by the current user.
     /// </summary>
     [HttpGet]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> GetUserOrders([FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 20, [FromQuery] bool checkProcessingOnly = false)
     {
         var res = await Mediator.Send(new GetUserOrdersQuery 
@@ -44,7 +53,7 @@ public class OrdersController : ApiControllerBase
     /// Get a specific order by UID for the logged-in user.
     /// </summary>
     [HttpGet("{uid}")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<OrderDetailsResponse>> GetOrder(string uid)
     {
         var res = await Mediator.Send(new GetOrderQuery { Uid = uid });
@@ -55,7 +64,7 @@ public class OrdersController : ApiControllerBase
     /// Get all orders for a specific store (for store owners).
     /// </summary>
     [HttpGet("store/{storeUid}")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<PagingResponse<OrderResponse>>> GetAllOrdersByStore(string storeUid, [FromQuery] int pageNumber = 1, [FromQuery] int pageSize = 20)
     {
         var res = await Mediator.Send(new GetAllOrdersByStoreQuery 
@@ -73,18 +82,36 @@ public class OrdersController : ApiControllerBase
     /// Only the seller who owns these items can update their status.
     /// </summary>
     [HttpPost("mark-shipped")]
-    [AllowAnonymous]
-    public async Task<ActionResult> MarkAsShipped([FromBody] MarkAsShippedRequest request)
+    [Authorize]
+    public async Task<ActionResult> MarkAsShipped([FromBody] Core.Application.Mediatr.Orders.Commands.UpdateOrderItemStatus.UpdateOrderItemStatusCommand command)
     {
-        var command = new Core.Application.Mediatr.Orders.Commands.UpdateOrderItemStatus.UpdateOrderItemStatusCommand
-        {
-            ItemUids = request.ItemUids,
-            TrackingNumber = request.TrackingNumber,
-            ShippingProvider = request.ShippingProvider
-        };
-        
         var result = await Mediator.Send(command);
         return Ok(new { success = result, message = "Order items marked as shipped successfully." });
+    }
+
+    /// <summary>
+    /// Get shipping status for order items. Both buyer and seller can call this.
+    /// Buyer sees all items in their order; seller sees only their own items.
+    /// Returns IsShipped = false with no details if item not yet shipped.
+    /// </summary>
+    [HttpGet("mark-shipped")]
+    [Authorize]
+    public async Task<ActionResult<List<ItemShippingStatusResponse>>> GetShippingDetails([FromQuery] string orderUid, [FromQuery] string itemUid = null)
+    {
+        var result = await Mediator.Send(new GetShippingDetailsQuery { OrderUid = orderUid, ItemUid = itemUid });
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Update shipping details for already-shipped items (seller only).
+    /// Updates tracking number, shipping provider, and replaces proof images.
+    /// </summary>
+    [HttpPut("mark-shipped")]
+    [Authorize]
+    public async Task<ActionResult> UpdateShippingDetails([FromBody] UpdateShippingDetailsCommand command)
+    {
+        var result = await Mediator.Send(command);
+        return Ok(new { success = result, message = "Shipping details updated successfully." });
     }
 
     /// <summary>
@@ -92,7 +119,7 @@ public class OrdersController : ApiControllerBase
     /// Buyer confirms they have received these specific items.
     /// </summary>
     [HttpPost("confirm-delivery")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> ConfirmDelivery([FromBody] ConfirmDeliveryRequest request)
     {
         var command = new Core.Application.Mediatr.Orders.Commands.ConfirmOrderItemDelivery.ConfirmOrderItemDeliveryCommand
@@ -109,7 +136,7 @@ public class OrdersController : ApiControllerBase
     /// and moving items back to the user's bag.
     /// </summary>
     [HttpPost("failed-cleanup")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> FailedCleanup([FromBody] FailedOrderCleanupRequest request)
     {
         var command = new Core.Application.Mediatr.Orders.Commands.FailedOrderCleanup.FailedOrderCleanupCommand
@@ -125,7 +152,7 @@ public class OrdersController : ApiControllerBase
     /// Refund one or more failed order items. Credits amount to buyer wallet immediately.
     /// </summary>
     [HttpPost("refund")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> RefundOrderItem([FromBody] RefundOrderRequest request)
     {
         var command = new Core.Application.Mediatr.Orders.Commands.RefundOrder.RefundOrderCommand
@@ -139,10 +166,75 @@ public class OrdersController : ApiControllerBase
     }
 
     /// <summary>
+    /// Buyer requests a refund for one or more delivered order items.
+    /// Accepts batch of line items with individual reasons and evidence files.
+    /// </summary>
+    [HttpPost("refund/request")]
+    [Authorize]
+    public async Task<ActionResult<RefundInitiateResponse>> RefundRequest([FromBody] RefundInitiateCommand command)
+    {
+        var result = await Mediator.Send(command);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Seller approves a refund request.
+    /// Triggers Stripe refund to buyer's original payment method.
+    /// </summary>
+    [HttpPost("refund/approve")]
+    [Authorize]
+    public async Task<ActionResult<RefundApproveResponse>> RefundApprove([FromBody] RefundApproveCommand command)
+    {
+        var result = await Mediator.Send(command);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// Seller rejects a refund request.
+    /// Provides a reason and optional supporting media files.
+    /// </summary>
+    [HttpPost("refund/reject")]
+    [Authorize]
+    public async Task<ActionResult<RefundRejectResponse>> RefundReject([FromBody] RefundRejectCommand command)
+    {
+        var result = await Mediator.Send(command);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// View all refund requests for an order (buyer or seller).
+    /// Returns full details including evidence, return address, and reasons.
+    /// </summary>
+    [HttpGet("refund/viewRequest/{orderUid}")]
+    [Authorize]
+    public async Task<ActionResult<List<OrderRefundRequestDto>>> ViewRefundRequest(string orderUid)
+    {
+        var query = new Core.Application.Mediatr.Orders.Queries.GetOrderRefundRequests.GetOrderRefundRequestsQuery
+        {
+            OrderUid = orderUid
+        };
+        var result = await Mediator.Send(query);
+        return Ok(result);
+    }
+
+    /// <summary>
+    /// List all refund requests for the authenticated user (buyer or seller).
+    /// Lightweight summary: order, product, status, amount, date.
+    /// </summary>
+    [HttpGet("refund/requests")]
+    [Authorize]
+    public async Task<ActionResult<List<RefundRequestSummaryDto>>> GetRefundRequestsList()
+    {
+        var query = new Core.Application.Mediatr.Orders.Queries.GetRefundRequestsList.GetRefundRequestsListQuery();
+        var result = await Mediator.Send(query);
+        return Ok(result);
+    }
+
+    /// <summary>
     /// Reorder one or more failed order items. Restarts countdown (one-time only per item).
     /// </summary>
     [HttpPost("reorder")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> Reorder([FromBody] ReorderRequest request)
     {
         var command = new Core.Application.Mediatr.Orders.Commands.Reorder.ReorderCommand
@@ -159,7 +251,7 @@ public class OrdersController : ApiControllerBase
     /// Can only be used once per item, after countdown has expired.
     /// </summary>
     [HttpPost("extend-delivery")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult> ExtendDelivery([FromBody] ExtendDeliveryRequest request)
     {
         var command = new Core.Application.Mediatr.Orders.Commands.ExtendDelivery.ExtendDeliveryCommand
@@ -179,12 +271,6 @@ public class FailedOrderCleanupRequest
     public string OrderUid { get; set; }
 }
 
-public class MarkAsShippedRequest
-{
-    public List<string> ItemUids { get; set; } = new();
-    public string TrackingNumber { get; set; }
-    public string ShippingProvider { get; set; }
-}
 
 public class ConfirmDeliveryRequest
 {
@@ -205,4 +291,13 @@ public class ReorderRequest
 public class ExtendDeliveryRequest
 {
     public List<string> ItemUids { get; set; } = new();
+}
+
+public class RefundRejectRequest
+{
+    [Required]
+    [MaxLength(2000)]
+    public string Reason { get; set; }
+
+    public List<string> MediaFileUids { get; set; } = new List<string>();
 }

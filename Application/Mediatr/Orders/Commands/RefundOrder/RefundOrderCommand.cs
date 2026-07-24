@@ -9,6 +9,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
+using Core.Application.Models.Stripe;
 using Core.Domain.Entities;
 using Core.Domain.Enums;
 
@@ -46,15 +47,21 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
     private readonly IApplicationDbContext _dbContext;
     private readonly ILogger<RefundOrderCommandHandler> _logger;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ISettingsCacheService _settingsCacheService;
+    private readonly IStripeService _stripeService;
 
     public RefundOrderCommandHandler(
         IApplicationDbContext dbContext,
         ILogger<RefundOrderCommandHandler> logger,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        ISettingsCacheService settingsCacheService,
+        IStripeService stripeService)
     {
         _dbContext = dbContext;
         _logger = logger;
         _currentUserService = currentUserService;
+        _settingsCacheService = settingsCacheService;
+        _stripeService = stripeService;
     }
 
     public async Task<RefundOrderResponse> Handle(RefundOrderCommand request, CancellationToken cancellationToken)
@@ -73,24 +80,21 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
                 throw new NotFoundException("Profile not found.");
             }
 
-            // Validate that at least one item UID was provided
             if (request.ItemUids == null || request.ItemUids.Count == 0)
             {
                 throw new BadRequestException("At least one item UID must be provided.");
             }
 
-            // Load all order items by UIDs
             var orderItems = await _dbContext.OrderProductAffiliates
                 .Include(opa => opa.Product)
                 .Include(opa => opa.Order)
-                .ThenInclude(o => o.Currency)
+                    .ThenInclude(o => o.Currency)
                 .Where(opa => request.ItemUids.Contains(opa.Uid) && opa.IsActive)
                 .ToListAsync(cancellationToken);
 
             var results = new List<RefundItemResult>();
             var validItems = new List<(OrderProductAffiliate Item, decimal RefundAmount)>();
 
-            // First pass: validate all items and collect refund amounts
             foreach (var itemUid in request.ItemUids)
             {
                 var orderItem = orderItems.FirstOrDefault(opa => opa.Uid == itemUid);
@@ -108,7 +112,6 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
 
                 var order = orderItem.Order;
 
-                // Verify that the current user is the buyer (order owner)
                 if (order.ProfileId != profile.Id)
                 {
                     results.Add(new RefundItemResult
@@ -120,12 +123,10 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
                     continue;
                 }
 
-                // Lazy update: if countdown expired but background job hasn't run yet, mark as OrderFailed now
                 var isExpired = orderItem.CountdownExpiryDate.HasValue && orderItem.CountdownExpiryDate.Value < DateTime.UtcNow;
                 if (orderItem.OrderItemStatus == OrderStatusEnum.Processing && isExpired)
                     orderItem.OrderItemStatus = OrderStatusEnum.OrderFailed;
 
-                // Verify order item is in OrderFailed status
                 if (orderItem.OrderItemStatus != OrderStatusEnum.OrderFailed)
                 {
                     results.Add(new RefundItemResult
@@ -137,11 +138,7 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
                     continue;
                 }
 
-                // Calculate refund amount (product price + shipping cost + 5% VAT)
-                const decimal vatRate = 0.05m; // 5% UAE VAT
-                var baseAmount = (orderItem.ProductPriceSnapshot ?? 0) + (orderItem.ShippingCostSnapshot ?? 0);
-                var vatAmount = baseAmount * vatRate;
-                var refundAmount = (baseAmount + vatAmount) * orderItem.ProductQuantity;
+                var refundAmount = orderItem.ProductPriceSnapshot.GetValueOrDefault() * orderItem.ProductQuantity;
 
                 validItems.Add((orderItem, refundAmount));
                 results.Add(new RefundItemResult
@@ -155,13 +152,12 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
 
             var totalRefundAmount = validItems.Sum(v => v.RefundAmount);
 
-            // If not confirmed, return confirmation response
             if (!request.Confirmed)
             {
                 return new RefundOrderResponse
                 {
                     Success = true,
-                    Message = "Please confirm to proceed with the refund.",
+                    Message = "Please confirm to proceed with the refund. The amount will be refunded to your original payment method via Stripe. Card processing fees are non-refundable.",
                     RequiresConfirmation = true,
                     TotalRefundAmount = totalRefundAmount,
                     SuccessCount = validItems.Count,
@@ -170,54 +166,104 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
                 };
             }
 
-            // Process the refunds
+            // Process refunds — group by order to issue one Stripe refund per PaymentIntent
             var ordersToUpdate = new Dictionary<int, Order>();
+            var stripeRefundResults = new List<(Order Order, string StripeRefundId, decimal RefundAmount)>();
 
-            foreach (var (orderItem, refundAmount) in validItems)
+            // Group valid items by their order's StripePaymentIntentId for batch refund
+            var itemsByPaymentIntent = validItems
+                .GroupBy(v => v.Item.Order?.StripePaymentIntentId)
+                .ToList();
+
+            foreach (var piGroup in itemsByPaymentIntent)
             {
-                var order = orderItem.Order;
+                var paymentIntentId = piGroup.Key;
+                var groupTotal = piGroup.Sum(v => v.RefundAmount);
+                var firstOrder = piGroup.First().Item.Order;
 
-                // Update order item status to Refunded
-                orderItem.OrderItemStatus = OrderStatusEnum.Refunded;
-                orderItem.UpdatedAt = DateTime.UtcNow;
-
-                // Track orders for parent status update
-                if (!ordersToUpdate.ContainsKey(order.Id))
+                if (string.IsNullOrEmpty(paymentIntentId))
                 {
-                    ordersToUpdate[order.Id] = order;
+                    _logger.LogWarning("Order {OrderUid} has no StripePaymentIntentId. Falling back to wallet credit for refund.", firstOrder?.Uid);
+                    continue;
                 }
 
-                _logger.LogInformation("Order item {ItemUid} refunded {Amount} to user {UserId}",
-                    orderItem.Uid, refundAmount, user.Id);
-            }
-
-            // Create wallet refund transactions grouped by seller
-            if (validItems.Count > 0)
-            {
-                var itemsBySeller = validItems
-                    .GroupBy(v => v.Item.Product?.UserId)
-                    .ToList();
-
-                foreach (var sellerGroup in itemsBySeller)
+                try
                 {
-                    var itemsInGroup = sellerGroup.ToList();
-                    var totalSellerAmount = itemsInGroup.Sum(v => v.RefundAmount);
-                    var firstItem = itemsInGroup.First().Item;
-                    var itemUidsList = string.Join(", ", itemsInGroup.Select(v => v.Item.Uid));
+                    var refundAmountInCents = (long)Math.Round(groupTotal * 100, MidpointRounding.AwayFromZero);
 
-                    var refundTransaction = new WalletTransaction
+                    var stripeRefund = await _stripeService.CreateRefundAsync(new RefundRequest
                     {
-                        ProfileId = profile.Id,
-                        TransactionType = TransactionTypeEnum.Refund,
-                        Amount = totalSellerAmount,
-                        CurrencyId = firstItem.Order.CurrencyId,
-                        OrderId = firstItem.OrderId,
-                        OrderProductAffiliateId = firstItem.Id,
-                        Description = $"Refund for order items: {itemUidsList}",
-                        TransactionDate = DateTime.UtcNow,
-                        Status = TransactionStatusEnum.Completed
-                    };
-                    _dbContext.WalletTransactions.Add(refundTransaction);
+                        PaymentIntentId = paymentIntentId,
+                        AmountInCents = refundAmountInCents,
+                        Reason = "requested_by_customer",
+                        Metadata = new Dictionary<string, string>
+                        {
+                            { "refund_type", "order_failed_wallet_fallback" },
+                            { "order_uid", firstOrder.Uid }
+                        }
+                    });
+
+                    stripeRefundResults.Add((firstOrder, stripeRefund.RefundId, groupTotal));
+
+                    foreach (var (orderItem, refundAmount) in piGroup)
+                    {
+                        orderItem.OrderItemStatus = OrderStatusEnum.Refunded;
+                        orderItem.EscrowStatus = EscrowStatusEnum.Cancelled;
+                        orderItem.UpdatedAt = DateTime.UtcNow;
+
+                        if (!ordersToUpdate.ContainsKey(orderItem.OrderId))
+                        {
+                            ordersToUpdate[orderItem.OrderId] = orderItem.Order;
+                        }
+
+                        _logger.LogInformation("Order item {ItemUid} refunded {Amount} to user {UserId} via Stripe refund {RefundId}",
+                            orderItem.Uid, refundAmount, user.Id, stripeRefund.RefundId);
+
+                        _dbContext.WalletTransactions.Add(new WalletTransaction
+                        {
+                            ProfileId = profile.Id,
+                            TransactionType = TransactionTypeEnum.Refund,
+                            Amount = refundAmount,
+                            CurrencyId = orderItem.Order.CurrencyId,
+                            OrderId = orderItem.OrderId,
+                            OrderProductAffiliateId = orderItem.Id,
+                            Description = orderItem.Order.Uid,
+                            TransactionDate = DateTime.UtcNow,
+                            Status = TransactionStatusEnum.Completed
+                        });
+                    }
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogError(ex, "Stripe refund failed for PaymentIntent {PaymentIntentId}. Falling back to wallet credit.", paymentIntentId);
+
+                    foreach (var (orderItem, refundAmount) in piGroup)
+                    {
+                        orderItem.OrderItemStatus = OrderStatusEnum.Refunded;
+                        orderItem.UpdatedAt = DateTime.UtcNow;
+
+                        if (!ordersToUpdate.ContainsKey(orderItem.OrderId))
+                        {
+                            ordersToUpdate[orderItem.OrderId] = orderItem.Order;
+                        }
+
+                        _logger.LogInformation("Order item {ItemUid} refunded {Amount} to wallet (Stripe refund fallback) for user {UserId}",
+                            orderItem.Uid, refundAmount, user.Id);
+
+                        var walletTransaction = new WalletTransaction
+                        {
+                            ProfileId = profile.Id,
+                            TransactionType = TransactionTypeEnum.Refund,
+                            Amount = refundAmount,
+                            CurrencyId = orderItem.Order.CurrencyId,
+                            OrderId = orderItem.OrderId,
+                            OrderProductAffiliateId = orderItem.Id,
+                            Description = $"Refund for order item: {orderItem.Uid} (Stripe refund fallback)",
+                            TransactionDate = DateTime.UtcNow,
+                            Status = TransactionStatusEnum.Completed
+                        };
+                        _dbContext.WalletTransactions.Add(walletTransaction);
+                    }
                 }
             }
 
@@ -259,10 +305,9 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
-            // Update results to show processed status
             foreach (var result in results.Where(r => r.Success))
             {
-                result.Message = "Refund processed successfully.";
+                result.Message = "Refund processed successfully. The amount will be credited to your original payment method within 5-10 business days.";
             }
 
             var successCount = validItems.Count;
@@ -272,7 +317,7 @@ public class RefundOrderCommandHandler : IRequestHandler<RefundOrderCommand, Ref
             {
                 Success = successCount > 0,
                 Message = successCount > 0
-                    ? $"Refund processed. {successCount} item(s) refunded, {failedCount} item(s) failed."
+                    ? $"Refund processed. {successCount} item(s) refunded, {failedCount} item(s) failed. The refund will be credited to your original payment method within 5-10 business days. Note: Card processing fees are non-refundable."
                     : "All refund attempts failed.",
                 RequiresConfirmation = false,
                 TotalRefundAmount = totalRefundAmount,

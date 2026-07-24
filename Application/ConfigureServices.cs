@@ -23,16 +23,6 @@ namespace Core.Application
                 services.Configure<OrderSettings>(options => { });
             }
 
-            // Only register Swagger services in Development environment
-            if (configuration != null && configuration["ASPNETCORE_ENVIRONMENT"] == "Development")
-            {
-                services.AddSwaggerGen(config =>
-                {
-                    //use fully qualified object names
-                    config.CustomSchemaIds(x => x.FullName);
-                });
-            }
-
             //services.AddAutoMapper(Assembly.GetExecutingAssembly());
             services.AddValidatorsFromAssembly(Assembly.GetExecutingAssembly());
             services.AddMediatR(cfg => 

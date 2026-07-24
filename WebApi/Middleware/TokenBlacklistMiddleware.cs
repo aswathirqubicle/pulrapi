@@ -10,15 +10,15 @@ namespace WebApi.Middleware
     public class TokenBlacklistMiddleware
     {
         private readonly RequestDelegate _next;
-        private readonly ITokenBlacklistService _tokenBlacklistService;
 
-        public TokenBlacklistMiddleware(RequestDelegate next, ITokenBlacklistService tokenBlacklistService)
+        public TokenBlacklistMiddleware(RequestDelegate next)
         {
             _next = next;
-            _tokenBlacklistService = tokenBlacklistService;
         }
 
-        public async Task InvokeAsync(HttpContext context)
+        // ITokenBlacklistService is scoped (DB-backed), so it is resolved per request
+        // via method injection rather than the singleton middleware constructor.
+        public async Task InvokeAsync(HttpContext context, ITokenBlacklistService tokenBlacklistService)
         {
             try
             {
@@ -44,7 +44,7 @@ namespace WebApi.Middleware
                         return;
                     }
                     
-                    if (!string.IsNullOrEmpty(jti) && await _tokenBlacklistService.IsTokenBlacklistedAsync(jti))
+                    if (!string.IsNullOrEmpty(jti) && await tokenBlacklistService.IsTokenBlacklistedAsync(jti))
                     {
                         context.Response.StatusCode = 401;
                         await context.Response.WriteAsJsonAsync(new { message = "Token has been invalidated" });

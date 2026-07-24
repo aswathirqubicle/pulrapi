@@ -54,4 +54,27 @@ public class CreatePaymentRequest
     /// Example: "pulr://payment-complete" or "https://app.pulr.co/payment-complete"
     /// </summary>
     public string? ReturnUrl { get; set; }
+
+    /// <summary>
+    /// Optional CollabId to link this order to a collaboration.
+    /// </summary>
+    public string? CollabId { get; set; }
+
+    /// <summary>
+    /// When true, this is an exchange difference payment: the server recomputes the
+    /// price difference between the originally paid item(s) and the new combination(s)
+    /// and charges only the positive difference. Products/shipping are ignored in this mode.
+    /// </summary>
+    public bool IsExchange { get; set; }
+
+    /// <summary>
+    /// The original order UID (<c>Order.Uid</c>) the exchanged items belong to.
+    /// Used for ownership/consistency verification. Only relevant when <see cref="IsExchange"/> is true.
+    /// </summary>
+    public string? ExchangeOrderUid { get; set; }
+
+    /// <summary>
+    /// The items being exchanged. Only relevant when <see cref="IsExchange"/> is true.
+    /// </summary>
+    public List<ExchangeItemRequest>? ExchangeItems { get; set; }
 }

@@ -63,10 +63,13 @@ namespace Core.Application.Mediatr.Wallet.Queries
                     .Include(t => t.OrderProductAffiliate)
                     .Where(t => t.IsActive && t.ProfileId == profile.Id);
 
-                // Show Purchase and Refund transactions
+                // Show Purchase, Payout, Refund, and Exchange transactions
                 transactionsQuery = transactionsQuery.Where(t =>
                     t.TransactionType == TransactionTypeEnum.Purchase ||
-                    t.TransactionType == TransactionTypeEnum.Refund);
+                    t.TransactionType == TransactionTypeEnum.Payout ||
+                    t.TransactionType == TransactionTypeEnum.Refund ||
+                    t.TransactionType == TransactionTypeEnum.ExchangeCharge ||
+                    t.TransactionType == TransactionTypeEnum.ExchangeCredit);
 
                 // Apply filter (currently disabled - only Purchase transactions are shown)
                 // if (request.Filter?.ToLower() == "in")

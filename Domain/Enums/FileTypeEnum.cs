@@ -5,7 +5,7 @@ namespace Core.Domain.Enums
     {
         Image,
         Video,
-
+        Document,
         Executable = 777,
         Unknown = 999,
         Archive = 1000

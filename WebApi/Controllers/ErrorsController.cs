@@ -50,14 +50,14 @@ namespace WebApi.Controllers
                 var isDevelopment = webHostEnvironment?.EnvironmentName == "Development";
                 if (!isDevelopment)
                 {
-                    var safeMessage = GetSafeErrorMessage(exception, statusCode);
-                    return StatusCode(Response.StatusCode, new { message = safeMessage });
+                    var safeMessage = GetSafeErrorMessage(exception, statusCode, isDevelopment: false);
+                    return StatusCode(Response.StatusCode, new { message = safeMessage, traceId = HttpContext.TraceIdentifier });
                 }
 
                 var exceptionRes = new ExceptionResponseDto
                 {
                     StatusCode = statusCode,
-                    Message = GetSafeErrorMessage(exception, statusCode),
+                    Message = GetSafeErrorMessage(exception, statusCode, isDevelopment: true),
                     Details = exception.StackTrace
                 };
 
@@ -94,7 +94,7 @@ namespace WebApi.Controllers
             }
         }
 
-        private string GetSafeErrorMessage(Exception exception, int statusCode)
+        private string GetSafeErrorMessage(Exception exception, int statusCode, bool isDevelopment)
         {
             // For JWT-related exceptions, return generic messages to avoid exposing internal details
             if (exception is SecurityTokenMalformedException)
@@ -113,21 +113,27 @@ namespace WebApi.Controllers
             {
                 return "Invalid token";
             }
-            
+
             // For 401 errors, use generic message
             if (statusCode == StatusCodes.Status401Unauthorized)
             {
                 return "Unauthorized";
             }
-            
+
             // For NotFoundException in password reset context, return generic message
             if (exception is NotFoundException && exception.Message.Contains("User not found"))
             {
                 return "Invalid email format";
             }
-            
-            // For other exceptions, return the original message or a generic one
-            return exception.Message ?? "An error occurred";
+
+            // In Development, surface the original message to aid debugging.
+            if (isDevelopment)
+            {
+                return exception.Message ?? "An error occurred";
+            }
+
+            // In production, never disclose raw exception text for unknown exceptions.
+            return "An error occurred while processing your request.";
         }
     }
 }

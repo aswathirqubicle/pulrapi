@@ -37,7 +37,9 @@ namespace Core.Infrastructure
             IConfiguration configuration,
             IWebHostEnvironment webHostEnvironment, string MyAllowSpecificOrigins)
         {
-            services.AddSignalR(cfg => cfg.EnableDetailedErrors = true);
+            // Only expose detailed SignalR hub errors in Development to avoid leaking
+            // internal exception details to connected clients in production.
+            services.AddSignalR(cfg => cfg.EnableDetailedErrors = webHostEnvironment.IsDevelopment());
 
             // Add memory cache for Apple public key caching
             services.AddMemoryCache();
@@ -56,15 +58,15 @@ namespace Core.Infrastructure
                 options.AddPolicy(name: MyAllowSpecificOrigins,
                     builder =>
                     {
-                        builder
-                            //.WithOrigins(configuration["Cors:Origins:Origin1"],
-                            //         configuration["Cors:Origins:Origin2"],
-                            //         configuration["Cors:Origins:Origin3"])
-                            .AllowAnyMethod()
-                            .AllowAnyHeader()
-                            .AllowAnyOrigin();
-                        //.SetIsOriginAllowed(origin => true);
-
+                        if (webHostEnvironment.IsDevelopment())
+                        {
+                            builder.AllowAnyOrigin().AllowAnyMethod().AllowAnyHeader();
+                        }
+                        else
+                        {
+                            var origins = configuration.GetSection("Cors:Origins").Get<string[]>() ?? Array.Empty<string>();
+                            builder.WithOrigins(origins).AllowAnyMethod().AllowAnyHeader();
+                        }
                     });
             });
 
@@ -101,8 +103,10 @@ namespace Core.Infrastructure
             services.AddSingleton<IFacebookAuthService, FacebookAuthService>();
             services.AddSingleton<IGoogleAuthService, GoogleAuthService>();
             services.AddSingleton<IAppleAuthService, AppleAuthService>();
-            // Register TokenBlacklistService
-            services.AddSingleton<ITokenBlacklistService, TokenBlacklistService>();
+            // Register TokenBlacklistService (scoped: it is backed by the scoped DbContext)
+            services.AddScoped<ITokenBlacklistService, TokenBlacklistService>();
+            // OTP hasher for password-reset / email-verification codes
+            services.AddSingleton<IOtpHasher, Core.Infrastructure.Services.Users.OtpHasher>();
 
             #region Auth Config
 
@@ -110,11 +114,17 @@ namespace Core.Infrastructure
             services.Configure<JWT>(configuration.GetSection("JWT"));
             services.AddIdentity<User, IdentityRole>(o =>
                 {
-                    o.Password.RequiredLength = 6;
-                    //o.Password.RequireUppercase = true;
-                    //o.Password.RequireDigit = true;
-                    //o.Password.RequireNonAlphanumeric = true;
-                    //o.Password.RequiredUniqueChars = 3;
+                    // Password policy: min length 8 with upper/lower/digit (no symbol required).
+                    o.Password.RequiredLength = 8;
+                    o.Password.RequireUppercase = true;
+                    o.Password.RequireLowercase = true;
+                    o.Password.RequireDigit = true;
+                    o.Password.RequireNonAlphanumeric = false;
+
+                    // Account lockout to throttle credential brute-force.
+                    o.Lockout.AllowedForNewUsers = true;
+                    o.Lockout.MaxFailedAccessAttempts = 5;
+                    o.Lockout.DefaultLockoutTimeSpan = TimeSpan.FromMinutes(15);
 
                     o.User.RequireUniqueEmail = true;
                     //o.SignIn.RequireConfirmedEmail = true;
@@ -201,6 +211,7 @@ namespace Core.Infrastructure
             services.AddScoped<IStripeService, Core.Infrastructure.Services.Stripe.StripeService>();
             services.AddScoped<IOrderService, OrderService>();
             services.AddScoped<IVideoProcessingService, VideoProcessingService>();
+            services.AddScoped<ISettingsCacheService, SettingsCacheService>();
 
             // Background services
             services.AddHostedService<OrderCountdownService>();
@@ -209,12 +220,14 @@ namespace Core.Infrastructure
 
             #region Swagger
 
-            // Only register Swagger services in Development environment
-            if (webHostEnvironment.IsDevelopment())
+            // Register Swagger only when explicitly enabled for a non-production Swagger environment.
+            if (SwaggerConfiguration.IsEnabled(configuration))
             {
                 services.AddSingleton<DevOnlyEndpointsDocumentFilter>();
                 services.AddSwaggerGen(options =>
                 {
+                    // Use fully qualified object names to avoid schema name collisions.
+                    options.CustomSchemaIds(x => x.FullName);
                     options.SwaggerDoc("v1", new OpenApiInfo
                     {
                         Title = "API",
@@ -222,6 +235,7 @@ namespace Core.Infrastructure
                     });
                     // Hide dev-only delete-all-posts and delete-all-user-posts from Swagger when not in Development
                     options.DocumentFilter<DevOnlyEndpointsDocumentFilter>();
+                    options.OperationFilter<MediaFileUploadOperationFilter>();
                     //TODO Fix swagger authorize role filter
                     //options.DocumentFilter<SwaggerAuthorizeRoleFilter>();
                     options.AddSecurityDefinition("BearerDefinition", new OpenApiSecurityScheme()

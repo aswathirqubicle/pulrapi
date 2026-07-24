@@ -1,4 +1,4 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 
 namespace Core.Application.Models
@@ -22,6 +22,8 @@ namespace Core.Application.Models
         public int CurrentUserWishlistCount { get; set; }
         public int CurrentUserBagItemsTotalQuantity { get; set; }
         public bool HasProcessingOrders { get; set; }
+        public bool FollowedByMe { get; set; }
+        public bool IsFollowingMe { get; set; }
 
     }
 }

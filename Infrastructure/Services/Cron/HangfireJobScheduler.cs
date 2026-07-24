@@ -24,6 +24,11 @@ namespace Core.Infrastructure.Services.Cron
             recurringJobManager.AddOrUpdate<IStoryCleanupService>("DeleteExpiredStories",
                 job => job.DeleteExpiredStoriesAsync(),
                 "0 * * * *"); // Every hour
+
+            // Purge expired revoked-token (logout blacklist) rows daily at 3 AM
+            recurringJobManager.AddOrUpdate<ITokenBlacklistService>("PurgeExpiredRevokedTokens",
+                job => job.PurgeExpiredAsync(),
+                "0 3 * * *"); // Daily at 3 AM
         }
 
         public static string HourInterval(int interval)

@@ -4,6 +4,8 @@ using MediatR;
 using Microsoft.Extensions.Logging;
 using Core.Application.Models;
 using Core.Application.Interfaces;
+using Core.Application.Constants;
+using Core.Application.Helpers;
 using Microsoft.AspNetCore.SignalR;
 using Dashboard.Application.Hubs;
 using Amazon.Runtime;
@@ -49,7 +51,8 @@ namespace Dashboard.Application.Mediatr.AppLogs.Queries
                 var listMapped = new PagingResponse<AppLogResponse>();
 
                 var credentials = new BasicAWSCredentials(_configuration["Aws:CloudwatchAccessKey"], _configuration["Aws:CloudwatchSecret"]);
-                using (var client = new AmazonCloudWatchLogsClient(credentials, RegionEndpoint.MESouth1))
+                using (var client = new AmazonCloudWatchLogsClient(credentials, 
+                                                                    AwsRegionHelper.GetRegionEndpoint(_configuration[AwsLocationNames.AwsRegion])))
                 {
                     var describeLogStreamsRequest = new DescribeLogStreamsRequest()
                     {

@@ -37,6 +37,7 @@ namespace Core.Application.Mediatr.Posts.Commands
         public int? VideoWidth { get; set; }
         public int? VideoHeight { get; set; }
         public string ThumbnailUid { get; set; }
+        public string? CollabId { get; set; }
     }
 
     public class CreatePostCommandHandler : IRequestHandler<CreatePostCommand, PostDetailsResponse>
@@ -126,6 +127,7 @@ namespace Core.Application.Mediatr.Posts.Commands
                     User = user,
                     Store = model.StoreUid != null ? await _dbContext.Stores.SingleOrDefaultAsync(s => s.UserId == user.Id && s.Uid == model.StoreUid, cancellationToken) : null,
                     MediaFile = existingMediaFile,
+                    CollabId = request.CollabId,
                     PostProfileMentions = mentionedProfiles.ConvertAll(e => new PostProfileMention { Profile = e }).ToList(),
                     //PostStoreMentions = mentionedStores.ConvertAll(e => new PostStoreMention { Store = e }).ToList(),
                     PostProductTags = model.PostProductTags.Select(e => 

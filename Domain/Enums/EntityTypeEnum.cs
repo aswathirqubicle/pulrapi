@@ -7,6 +7,8 @@
         COMMENT,
         STORY,
         PROFILE,
-        COLLECTION
+        COLLECTION,
+        COLLAB_INVITE,
+        COLLAB
     }
 }

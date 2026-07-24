@@ -101,6 +101,7 @@ namespace Core.Application.Mediatr.Products.Queries
                     ProductUrl = productEntity.ProductUrl,
                     Type = productEntity.Type,
                     SellType = productEntity.SellType,
+                    CollabId = productEntity.CollabId,
                     InWishlist = inWishlist,
                     ProductMediaFiles = productEntity.ProductMediaFiles
                         .Where(pm => pm.MediaFile.IsActive)

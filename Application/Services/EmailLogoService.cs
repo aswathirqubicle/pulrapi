@@ -4,8 +4,10 @@ using System.Linq;
 using System.Net.Http;
 using System.Threading;
 using System.Threading.Tasks;
+using Core.Application.Constants;
 using Core.Application.Interfaces;
 using Core.Application.Models;
+using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
 
 namespace Core.Application.Services
@@ -19,15 +21,20 @@ namespace Core.Application.Services
     {
         private readonly ILogger<EmailLogoService> _logger;
         private readonly IHttpClientFactory _httpClientFactory;
+        private readonly IConfiguration _configuration;
         private static byte[] _cachedLogoPngBytes = null;
         private static readonly SemaphoreSlim _cacheLock = new SemaphoreSlim(1, 1);
         private const int MaxRetries = 3;
         private const int TimeoutSeconds = 30;
 
-        public EmailLogoService(ILogger<EmailLogoService> logger, IHttpClientFactory httpClientFactory)
+        public EmailLogoService(
+            ILogger<EmailLogoService> logger,
+            IHttpClientFactory httpClientFactory,
+            IConfiguration configuration)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _httpClientFactory = httpClientFactory ?? throw new ArgumentNullException(nameof(httpClientFactory));
+            _configuration = configuration ?? throw new ArgumentNullException(nameof(configuration));
         }
 
         /// <inheritdoc/>
@@ -77,8 +84,20 @@ namespace Core.Application.Services
                     return _cachedLogoPngBytes;
                 }
 
-                // Direct PNG URL (hosted on S3)
-                var logoUrl = "https://purl-common-files-production.s3.me-south-1.amazonaws.com/Pulr+Logo_purple.png";
+                // Build logo URL from configuration (no hardcoded fallbacks)
+                var logoBucket = _configuration[AwsLocationNames.S3DocumentsBucket];
+                var logoFileName = _configuration[AwsLocationNames.LogoFileName];
+                var logoRegion = _configuration[AwsLocationNames.AwsRegion];
+
+                if (string.IsNullOrEmpty(logoBucket) || string.IsNullOrEmpty(logoFileName) || string.IsNullOrEmpty(logoRegion))
+                {
+                    _logger.LogError("Logo configuration missing. Required: S3DocumentsBucket, LogoFileName, AwsRegion");
+                    return null;
+                }
+
+                var logoUrl = $"https://{logoBucket}.s3.{logoRegion}.amazonaws.com/{logoFileName}";
+
+                _logger.LogInformation("Logo URL configured: {LogoUrl}", logoUrl);
 
                 for (int attempt = 1; attempt <= MaxRetries; attempt++)
                 {

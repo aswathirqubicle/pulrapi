@@ -14,6 +14,9 @@ namespace Core.Domain.Entities
         public bool IsRead { get; set; } = false;
         public string CommentText { get; set; }
         public string RequesterProfileType { get; set; } // "public" or "private" - stores the requester's profile type for follow requests
+        public string Title { get; set; }
+        public string Body { get; set; }
+        public int? FollowerCount { get; set; }
 
         // Navigation properties
         public virtual Profile ActorProfile { get; set; }

@@ -1,5 +1,6 @@
 ﻿using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.AspNetCore.RateLimiting;
 using System.Threading.Tasks;
 using Core.Application.Constants;
 using Core.Application.Mediatr.Users.Commands.Delete; 
@@ -56,6 +57,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-login")]
         [HttpPost("login")]
         public async Task<ActionResult<LoginResponse>> Login(LoginCommand command)
         {
@@ -91,6 +93,7 @@ namespace WebApi.Controllers
         //}
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-login")]
         [HttpPost("login-google-token")]
         public async Task<ActionResult<LoginResponse>> GoogleLoginWithToken(GoogleLoginCommand command)
         {
@@ -99,6 +102,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-login")]
         [HttpPost("login-apple")]
         public async Task<ActionResult<LoginResponse>> AppleLogin(AppleLoginCommand command)
         {
@@ -152,6 +156,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-otp-send")]
         [HttpPost("forgot-password")]
         public async Task<ActionResult> PasswordResetRequest([FromBody] PasswordResetRequestCommand command)
         {
@@ -178,6 +183,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-otp-verify")]
         [HttpPost("verify-otp")]
         public async Task<ActionResult<bool>> VerifyOtp([FromBody] VerifyOtpCommand command)
         {
@@ -199,6 +205,7 @@ namespace WebApi.Controllers
 
         [HttpPost("send-email-verification-otp")]
         [AllowAnonymous]
+        [EnableRateLimiting("auth-otp-send")]
         public async Task<ActionResult<EmailVerificationResponse>> SendEmailVerificationOtp([FromBody] SendEmailVerificationOtpCommand command)
         {
             try
@@ -218,6 +225,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-otp-verify")]
         [HttpPost("change-password-from-email")]
         public async Task<ActionResult> ChangePasswordFromEmail([FromBody] ChangePasswordFromEmailCommand command)
         {
@@ -234,6 +242,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-register")]
         [HttpPost("register")]
         public async Task<ActionResult> Register(RegisterCommand command)
         {
@@ -391,13 +400,14 @@ namespace WebApi.Controllers
             
             if (token != null)
             {
-                // Blacklist the JWT's jti for immediate invalidation
+                // Blacklist the JWT's jti until the token's own expiry, so the
+                // revocation persists across restarts and across instances.
                 var jti = Core.Infrastructure.Services.Users.UserService.GetJtiFromToken(token);
                 if (!string.IsNullOrEmpty(jti))
                 {
-                    await _tokenBlacklistService.BlacklistTokenAsync(jti);
+                    var expiresAtUtc = Core.Infrastructure.Services.Users.UserService.GetTokenExpiryUtc(token);
+                    await _tokenBlacklistService.BlacklistTokenAsync(jti, expiresAtUtc);
                 }
-                await _tokenBlacklistService.RemoveTokenAsync(token);
             }
 
             // Revoke refresh token (now required)
@@ -689,6 +699,7 @@ namespace WebApi.Controllers
         }
 
         [AllowAnonymous]
+        [EnableRateLimiting("auth-refresh")]
         [HttpPost("refresh-token")]
         public async Task<ActionResult<LoginResponse>> RefreshToken([FromBody] RefreshTokenRequest request)
         {
@@ -747,9 +758,8 @@ namespace WebApi.Controllers
             }
             catch (Exception ex)
             {
-                _logger.LogError(ex, "Error in AdminDeleteUser endpoint");
-                var inner = ex.InnerException != null ? ex.InnerException.Message : null;
-                return StatusCode(500, new { message = ex.Message, innerException = inner });
+                _logger.LogError(ex, "Error in AdminDeleteUser endpoint. TraceId: {TraceId}", HttpContext.TraceIdentifier);
+                return StatusCode(500, new { message = "An unexpected error occurred.", traceId = HttpContext.TraceIdentifier });
             }
         }
 

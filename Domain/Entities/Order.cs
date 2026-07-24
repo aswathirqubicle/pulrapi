@@ -63,7 +63,16 @@ public class Order : EntityBase
     /// <summary>
     /// Timestamp when the buyer confirmed delivery.
     /// </summary>
-    public DateTime? DeliveredAt { get; set; }
-    
-    public virtual ICollection<OrderProductAffiliate> OrderProductAffiliates { get; set; }
+public DateTime? DeliveredAt { get; set; }
+        public string? CollabId { get; set; }
+
+        public string? StripePaymentIntentId { get; set; }
+
+        public decimal? GrossAmount { get; set; }
+
+        public decimal? StripeFeeAmount { get; set; }
+
+        public decimal VatAmount { get; set; }
+
+        public virtual ICollection<OrderProductAffiliate> OrderProductAffiliates { get; set; }
 }

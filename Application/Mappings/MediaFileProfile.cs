@@ -9,8 +9,6 @@ namespace Core.Application.Mappings
     {
         public MediaFileProfile()
         {
-            CreateMap<UploadMediaFileDto, UploadMediaFileCommand>();
-
             CreateMap<MediaFile, MediaFileDetailsResponse>()
                 .ForMember(dest => dest.FileType, opt => opt.MapFrom(src => src.MediaFileType.ToString()))
                 .ForMember(dest => dest.IsMuted, opt => opt.MapFrom(src => src.IsMuted));

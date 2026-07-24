@@ -1,4 +1,5 @@
 using System;
+using System.Collections.Generic;
 using Core.Application.Models.BagItems;
 using Core.Domain.Enums;
 
@@ -21,6 +22,10 @@ namespace Core.Application.Models.Orders
         public string ShippingProvider { get; set; }
         public DateTime? ShippedAt { get; set; }
         public DateTime? DeliveredAt { get; set; }
+        public List<string> ShippingProofImageUrls { get; set; }
+
+        // Indicates if item was shipped before failing (for OrderFailed items)
+        public bool WasShipped { get; set; }
 
         // Retry/Reorder tracking
         public int RetryCount { get; set; }

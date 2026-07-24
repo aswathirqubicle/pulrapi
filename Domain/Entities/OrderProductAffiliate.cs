@@ -1,6 +1,7 @@
-﻿using Core.Domain.Entities;
+using Core.Domain.Entities;
 using Core.Domain.Enums;
 using System;
+using System.Collections.Generic;
 
 namespace Core.Domain.Entities;
 
@@ -26,6 +27,9 @@ public class OrderProductAffiliate : EntityBase
     public DateTime? ShippedAt { get; set; }
     public DateTime? DeliveredAt { get; set; }
 
+    // Shipping proof attachments (multiple images/PDFs per order item)
+    public ICollection<OrderItemShippingProof> ShippingProofs { get; set; } = new List<OrderItemShippingProof>();
+
     // Retry/Reorder tracking
     public int RetryCount { get; set; } = 0;
     public DateTime? CountdownExpiryDate { get; set; }
@@ -33,8 +37,19 @@ public class OrderProductAffiliate : EntityBase
     public bool IsRetryAllowed { get; set; } = true;
 
     // Delivery extension tracking (for shipped items when buyer hasn't received)
-    public int ExtensionCount { get; set; } = 0;  // Number of times buyer extended (max 1)
-    public DateTime? ExtensionExpiryDate { get; set; }  // When extension period ends (72 hours)
+    public int ExtensionCount { get; set; } = 0;
+    public DateTime? ExtensionExpiryDate { get; set; }
+
+    // Escrow and refund/exchange tracking
+    public EscrowStatusEnum EscrowStatus { get; set; } = EscrowStatusEnum.PendingDelivery;
+    public DateTime? EscrowReleaseAt { get; set; }
+    public DateTime? RefundEligibleUntil { get; set; }
+    public DateTime? ExchangeEligibleUntil { get; set; }
+    public string DeliveryProofUrl { get; set; }
+    public int? DeliveredBy { get; set; }
+    public DateTime? CheckinPromptSentAt { get; set; }
+    public Guid? ColabInviteId { get; set; }
+    public string CreatorUserId { get; set; }
 
     // Product snapshot fields - captured at order time to preserve data even if product is deleted
     public string ProductNameSnapshot { get; set; }

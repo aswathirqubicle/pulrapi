@@ -3,6 +3,7 @@ using System.Collections.Generic;
 using System.IdentityModel.Tokens.Jwt;
 using System.Linq;
 using System.Security.Claims;
+using System.Security.Cryptography;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
@@ -49,6 +50,11 @@ namespace Core.Infrastructure.Services.Users
         private readonly JWT _jwt;
         private readonly IAppleAuthService _appleAuthService;
         private readonly INotificationService _notificationService;
+        private readonly SignInManager<User> _signInManager;
+        private readonly IOtpHasher _otpHasher;
+
+        // After this many failed OTP verifications the code is invalidated and a new one must be requested.
+        private const int MaxOtpAttempts = 5;
 
         public UserService(
             ILogger<UserService> logger,
@@ -65,7 +71,9 @@ namespace Core.Infrastructure.Services.Users
             IProfileService profileService,
             IMapper mapper,
             IAppleAuthService appleAuthService,
-            INotificationService notificationService)
+            INotificationService notificationService,
+            SignInManager<User> signInManager,
+            IOtpHasher otpHasher)
         {
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _userManager = userManager ?? throw new ArgumentNullException(nameof(userManager));
@@ -82,6 +90,8 @@ namespace Core.Infrastructure.Services.Users
             _jwt = jwt?.Value ?? throw new ArgumentNullException(nameof(jwt));
             _appleAuthService = appleAuthService ?? throw new ArgumentNullException(nameof(appleAuthService));
             _notificationService = notificationService ?? throw new ArgumentNullException(nameof(notificationService));
+            _signInManager = signInManager ?? throw new ArgumentNullException(nameof(signInManager));
+            _otpHasher = otpHasher ?? throw new ArgumentNullException(nameof(otpHasher));
         }
 
         public async Task<string> GetRoleIdAsync(string roleName)
@@ -294,10 +304,10 @@ namespace Core.Infrastructure.Services.Users
                 // var token = await _userManager.GenerateEmailConfirmationTokenAsync(user);
                 // var confirmationLink =
                 //     $"{_configuration["ApiUrl"]}/users/confirm-email?email={user.Email}&token={token}";
-                var random = new Random();
-                var code = random.Next(100000, 999999).ToString();
-                user.EmailVerificationCode = code;
+                var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+                user.EmailVerificationCode = _otpHasher.Hash(code); // store hashed, never plaintext
                 user.EmailVerificationCodeExpiry = DateTime.UtcNow.AddMinutes(15); // 15 min expiry
+                user.EmailVerificationAttempts = 0;
                 await _dbContext.SaveChangesAsync(CancellationToken.None);
 
                 var emailContent = $@"
@@ -377,28 +387,17 @@ namespace Core.Infrastructure.Services.Users
             // If profile exists, we need to check its status even for OAuth users
             if (profile == null)
             {
-                // No profile exists - this is a new user
-                if (request.Password == "oauth_bypass")
-                {
-                    // OAuth new user - allow login without profile
-                    // Profile will be created during registration flow
-                }
-                else
-                {
-                    // Email login with no profile - reject
-                    authModel.IsAuthenticated = false;
-                    authModel.Message = "User account is deactivated";
-                    return authModel;
-                }
+                // Email login with no profile - reject
+                authModel.IsAuthenticated = false;
+                authModel.Message = "User account is deactivated";
+                return authModel;
             }
             else
             {
-                // Profile exists - check its status for all login methods
-                // If profile is inactive but user is not suspended, reactivate
+                // Profile exists - check its status
                 if (!profile.IsActive && !user.IsSuspended)
                 {
                     await ReactivateUserAsync(user);
-                    // Re-fetch profile after reactivation
                     profile = await _dbContext.Profiles.SingleOrDefaultAsync(p => p.UserId == user.Id);
                 }
 
@@ -410,8 +409,18 @@ namespace Core.Infrastructure.Services.Users
                 }
             }
 
-            // Check password or bypass for OAuth users
-            if (request.Password == "oauth_bypass" || await _userManager.CheckPasswordAsync(user, request.Password))
+            // Lockout-aware password check: increments AccessFailedCount on failure,
+            // locks the account at the configured threshold, and resets the counter
+            // on success. Does not create an auth cookie.
+            var signInResult = await _signInManager.CheckPasswordSignInAsync(user, request.Password, lockoutOnFailure: true);
+            if (signInResult.IsLockedOut)
+            {
+                authModel.IsAuthenticated = false;
+                authModel.Message = "Account temporarily locked due to too many failed attempts. Please try again later.";
+                return authModel;
+            }
+
+            if (signInResult.Succeeded)
             {
                 authModel = await CreateSuccessAuthModel(user);
                 return authModel;
@@ -663,10 +672,10 @@ namespace Core.Infrastructure.Services.Users
                 // code = WebEncoders.Base64UrlEncode(Encoding.UTF8.GetBytes(code));
                 // var passwordResetUrl =
                 // $"{_configuration["ConsumerUrls:WebApp"]}/password-reset?email={email}&token={code}";
-                var random = new Random();
-                var code = random.Next(100000, 999999).ToString();
-                user.PasswordResetCode = code;
+                var code = RandomNumberGenerator.GetInt32(100000, 1000000).ToString();
+                user.PasswordResetCode = _otpHasher.Hash(code); // store hashed, never plaintext
                 user.PasswordResetCodeExpiry = DateTime.UtcNow.AddMinutes(15); // 15 min expiry
+                user.PasswordResetAttempts = 0;
                 await _dbContext.SaveChangesAsync(CancellationToken.None);
 
                 var emailContent = $@"
@@ -813,12 +822,12 @@ namespace Core.Infrastructure.Services.Users
                     .CountAsync();
                 loginResponse.HasCompletedOnboarding = onboardingPreferencesCount > 0;
 
-                // Generate and store refresh token
+                // Generate and store refresh token (store hash; send raw token to client)
                 var refreshToken = GenerateSecureToken();
                 var refreshTokenEntity = new RefreshToken
                 {
                     UserId = res.UserId,
-                    Token = refreshToken,
+                    Token = HashRefreshToken(refreshToken),
                     CreatedAt = DateTime.UtcNow,
                     ExpiresAt = DateTime.UtcNow.AddDays(30),
                     DeviceIdentifier = loginDto.Device.DeviceIdentifier
@@ -852,6 +861,51 @@ namespace Core.Infrastructure.Services.Users
                 rng.GetBytes(randomNumber);
                 return Convert.ToBase64String(randomNumber);
             }
+        }
+
+        private static string HashRefreshToken(string token)
+        {
+            var bytes = System.Security.Cryptography.SHA256.HashData(System.Text.Encoding.UTF8.GetBytes(token));
+            return Convert.ToHexString(bytes).ToLowerInvariant();
+        }
+
+        private async Task<AuthModel> GetAuthModelForExternalLogin(User user)
+        {
+            var authModel = new AuthModel();
+
+            if (user.IsSuspended)
+            {
+                if (user.SuspendedUntil.HasValue && user.SuspendedUntil.Value > DateTime.UtcNow)
+                {
+                    await ReactivateUserAsync(user);
+                }
+                else
+                {
+                    authModel.IsAuthenticated = false;
+                    authModel.Message = HttpErrorMessages.AccountSuspended;
+                    return authModel;
+                }
+            }
+
+            var profile = await _dbContext.Profiles.SingleOrDefaultAsync(p => p.UserId == user.Id);
+
+            if (profile != null)
+            {
+                if (!profile.IsActive && !user.IsSuspended)
+                {
+                    await ReactivateUserAsync(user);
+                    profile = await _dbContext.Profiles.SingleOrDefaultAsync(p => p.UserId == user.Id);
+                }
+
+                if (!profile.IsActive)
+                {
+                    authModel.IsAuthenticated = false;
+                    authModel.Message = "User account is deactivated";
+                    return authModel;
+                }
+            }
+
+            return await CreateSuccessAuthModel(user);
         }
 
         private async Task<(int bagItemsCount, int wishlistItemsCount, int bagItemsTotalQuantity)> GetUserCollectionCountsAsync(
@@ -1093,16 +1147,8 @@ namespace Core.Infrastructure.Services.Users
                 }
                 else
                 {
-                    // Use GetTokenAsync directly for account validation (suspension/deactivation checks)
-                    var tokenRequest = new TokenRequest
-                    {
-                        IsEmail = true,
-                        Username = userInfo.Email,
-                        Password = "oauth_bypass" // Special password to bypass OAuth validation
-                    };
+                    var tokenResult = await GetAuthModelForExternalLogin(user);
 
-                    var tokenResult = await GetTokenAsync(tokenRequest);
-                    
                     if (!tokenResult.IsAuthenticated)
                     {
                         // If account is suspended beyond 30 days, create new user
@@ -1225,14 +1271,14 @@ namespace Core.Infrastructure.Services.Users
                     ShowWelcomeBack = wasReactivated
                 };
 
-                // Generate and store refresh token
+                // Generate and store refresh token (store hash; send raw token to client)
                 if (device != null && !string.IsNullOrEmpty(device.DeviceIdentifier))
                 {
                     var refreshToken = GenerateSecureToken();
                     var refreshTokenEntity = new RefreshToken
                     {
                         UserId = user.Id,
-                        Token = refreshToken,
+                        Token = HashRefreshToken(refreshToken),
                         CreatedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddDays(30),
                         DeviceIdentifier = device.DeviceIdentifier
@@ -1266,7 +1312,6 @@ namespace Core.Infrastructure.Services.Users
                     else
                     {
                         _logger.LogWarning($"No profile found for user {user.Id}");
-                        // If no profile exists, use the user's information directly
                         loginResponse.FullName = user.FirstName;
                         loginResponse.FirstName = user.FirstName;
                         loginResponse.LastName = user.LastName;
@@ -1276,7 +1321,6 @@ namespace Core.Infrastructure.Services.Users
                 catch (Exception ex)
                 {
                     _logger.LogError(ex, $"Error retrieving profile for user {user.Id}");
-                    // Continue with the login response even if profile retrieval fails
                     loginResponse.FullName = user.FirstName;
                     loginResponse.FirstName = user.FirstName;
                     loginResponse.LastName = user.LastName;
@@ -1292,7 +1336,6 @@ namespace Core.Infrastructure.Services.Users
                     && profileEntity.GenderId > 0
                     && !string.IsNullOrWhiteSpace(profileEntity.UserType);
 
-                // Check onboarding completion status
                 if (profileEntity != null)
                 {
                     var onboardingPreferencesCount = await _dbContext.ProfileOnboardingPreferences
@@ -1386,15 +1429,7 @@ namespace Core.Infrastructure.Services.Users
                 }
                 else
                 {
-                    // Use GetTokenAsync directly for account validation (suspension/deactivation checks)
-                    var tokenRequest = new TokenRequest
-                    {
-                        IsEmail = true,
-                        Username = userInfo.Email,
-                        Password = "oauth_bypass" // Special password to bypass OAuth validation
-                    };
-
-                    var tokenResult = await GetTokenAsync(tokenRequest);
+                    var tokenResult = await GetAuthModelForExternalLogin(user);
                     
                     if (!tokenResult.IsAuthenticated)
                     {
@@ -1495,14 +1530,14 @@ namespace Core.Infrastructure.Services.Users
                     ShowWelcomeBack = wasReactivated
                 };
 
-                // Generate and store refresh token
+                // Generate and store refresh token (store hash; send raw token to client)
                 if (device != null && !string.IsNullOrEmpty(device.DeviceIdentifier))
                 {
                     var refreshToken = GenerateSecureToken();
                     var refreshTokenEntity = new RefreshToken
                     {
                         UserId = user.Id,
-                        Token = refreshToken,
+                        Token = HashRefreshToken(refreshToken),
                         CreatedAt = DateTime.UtcNow,
                         ExpiresAt = DateTime.UtcNow.AddDays(30),
                         DeviceIdentifier = device.DeviceIdentifier
@@ -2064,11 +2099,11 @@ namespace Core.Infrastructure.Services.Users
 
         public async Task<LoginResponse> RefreshTokenAsync(string refreshToken, string deviceIdentifier)
         {
+            var tokenHash = HashRefreshToken(refreshToken);
             var tokenEntity = await _dbContext.RefreshTokens.Include(rt => rt.User)
-                .FirstOrDefaultAsync(rt => rt.Token == refreshToken && rt.RevokedAt == null);
-            //check the device identifier is on the db RefreshTokens
+                .FirstOrDefaultAsync(rt => rt.Token == tokenHash && rt.RevokedAt == null);
             var deviceExists = await _dbContext.RefreshTokens
-                .AnyAsync(a => a.DeviceIdentifier == deviceIdentifier && a.Token == refreshToken);
+                .AnyAsync(a => a.DeviceIdentifier == deviceIdentifier && a.Token == tokenHash);
             if (!deviceExists)
             {
                 throw new NotAuthenticatedException("Invalid device identifier");
@@ -2085,10 +2120,10 @@ namespace Core.Infrastructure.Services.Users
                 throw new NotAuthenticatedException("User not found for this refresh token");
             }
 
-            // Generate new token value and overwrite the existing entity
+            // Generate new token, store hash, return raw token to client
             var newRefreshToken = GenerateSecureToken();
-            tokenEntity.ReplacedByToken = tokenEntity.Token; // optional: track previous
-            tokenEntity.Token = newRefreshToken;
+            tokenEntity.ReplacedByToken = tokenEntity.Token;
+            tokenEntity.Token = HashRefreshToken(newRefreshToken);
             tokenEntity.CreatedAt = DateTime.UtcNow;
             tokenEntity.ExpiresAt = DateTime.UtcNow.AddDays(90);
             tokenEntity.DeviceIdentifier = deviceIdentifier;
@@ -2172,6 +2207,25 @@ namespace Core.Infrastructure.Services.Users
             {
                 // Return null for any JWT-related exceptions (malformed, expired, etc.)
                 return null;
+            }
+        }
+
+        /// <summary>
+        /// Reads the expiry (UTC) of a JWT so a revoked token can be blacklisted
+        /// only until it would have expired on its own. Falls back to "now" on any
+        /// parse failure so a malformed token is not retained indefinitely.
+        /// </summary>
+        public static DateTime GetTokenExpiryUtc(string token)
+        {
+            try
+            {
+                var handler = new System.IdentityModel.Tokens.Jwt.JwtSecurityTokenHandler();
+                var jwtToken = handler.ReadJwtToken(token);
+                return jwtToken?.ValidTo ?? DateTime.UtcNow;
+            }
+            catch (Exception)
+            {
+                return DateTime.UtcNow;
             }
         }
 

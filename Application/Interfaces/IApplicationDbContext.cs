@@ -2,6 +2,7 @@ using Core.Domain.Entities;
 using Core.Domain.Views;
 using Microsoft.AspNetCore.Identity;
 using Microsoft.EntityFrameworkCore;
+using Microsoft.EntityFrameworkCore.Infrastructure;
 using System.Threading;
 using System.Threading.Tasks;
 
@@ -72,6 +73,7 @@ namespace Core.Application.Interfaces
         public DbSet<User> Users { get; set; }
         public DbSet<Affiliate> Affiliates { get; set; }
         public DbSet<OrderProductAffiliate> OrderProductAffiliates { get; set; }
+        public DbSet<OrderItemShippingProof> OrderItemShippingProofs { get; set; }
         public DbSet<ProductCategory> ProductCategories { get; set; }
         public DbSet<SearchHistory> SearchHistories { get; set; }
         public DbSet<Gender> Genders { get; set; }
@@ -93,6 +95,8 @@ namespace Core.Application.Interfaces
         public DbSet<Mention> Mentions { get; set; }
         public DbSet<UserPushToken> UserPushTokens { get; set; }
         public DbSet<RefreshToken> RefreshTokens { get; set; }
+        public DbSet<RevokedToken> RevokedTokens { get; set; }
+        public DbSet<StripeWebhookEvent> StripeWebhookEvents { get; set; }
         public DbSet<BookmarkCollection> BookmarkCollections { get; set; }
         public DbSet<BookmarkCollectionItem> BookmarkCollectionItems { get; set; }
 
@@ -106,10 +110,23 @@ namespace Core.Application.Interfaces
         public DbSet<PaymentMethod> PaymentMethods { get; set; }
         public DbSet<WalletTransaction> WalletTransactions { get; set; }
         public DbSet<Dispute> Disputes { get; set; }
+        public DbSet<PaymentFeeSetting> PaymentFeeSettings { get; set; }
+        public DbSet<PlatformSetting> PlatformSettings { get; set; }
+        public DbSet<EscrowWallet> EscrowWallets { get; set; }
+        public DbSet<EscrowWalletTransaction> EscrowWalletTransactions { get; set; }
+        public DbSet<RefundDispute> RefundDisputes { get; set; }
+        public DbSet<RefundDisputeEvidence> RefundDisputeEvidences { get; set; }
 
         #endregion
 
         public DbSet<TEntity> Set<TEntity>() where TEntity : class;
+
+        /// <summary>
+        /// Provides access to database-related information and operations (e.g. explicit
+        /// transactions). Needed by webhook handling to commit state changes and the
+        /// idempotency-ledger insert atomically.
+        /// </summary>
+        DatabaseFacade Database { get; }
 
         Task<int>  SaveChangesAsync(CancellationToken cancellationToken);
         int SaveChanges();

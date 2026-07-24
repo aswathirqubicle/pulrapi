@@ -3,6 +3,8 @@ using System.Collections.Generic;
 using System.Threading.Tasks;
 using Core.Application.Interfaces;
 using Core.Application.Models.VideoTranscoding;
+using Core.Application.Constants;
+using Core.Application.Helpers;
 using Core.Domain.Entities;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
@@ -208,7 +210,7 @@ namespace Core.Infrastructure.Services
             var s3Client = new Amazon.S3.AmazonS3Client(
                 _configuration["Aws:AwsAccessKeyId"],
                 _configuration["Aws:AwsSecretAccessKey"],
-                Amazon.RegionEndpoint.MESouth1);
+                AwsRegionHelper.GetRegionEndpoint(_configuration[AwsLocationNames.AwsRegion]));
 
             var request = new Amazon.S3.Model.GetObjectRequest
             {
@@ -236,7 +238,7 @@ namespace Core.Infrastructure.Services
             using var client = new Amazon.S3.AmazonS3Client(
                 _configuration["Aws:AwsAccessKeyId"],
                 _configuration["Aws:AwsSecretAccessKey"],
-                Amazon.RegionEndpoint.MESouth1);
+                AwsRegionHelper.GetRegionEndpoint(_configuration[AwsLocationNames.AwsRegion]));
 
             var fileTransferUtility = new Amazon.S3.Transfer.TransferUtility(client);
             var files = System.IO.Directory.GetFiles(localDirectory, "*.*", System.IO.SearchOption.AllDirectories);
@@ -259,7 +261,6 @@ namespace Core.Infrastructure.Services
                     FilePath = file,
                     Key = s3Key,
                     BucketName = bucketName,
-                    CannedACL = Amazon.S3.S3CannedACL.PublicRead,
                     ContentType = contentType
                 };
 

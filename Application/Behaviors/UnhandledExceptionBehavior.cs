@@ -63,8 +63,9 @@ namespace Core.Application.Behaviors
                     throw; // Re-throw the original exception to preserve its type and status code
                 }
                 
-                // throw new Exception($"error: {ex.Message}", ex);
-                throw new Exception($"error: {ex.Message} | Inner: {ex.InnerException?.Message}", ex);
+                // Do not leak the original/inner exception text in the thrown message.
+                // The original exception is preserved as InnerException for server-side logging only.
+                throw new Exception("An unexpected error occurred.", ex);
             }
         }
     }

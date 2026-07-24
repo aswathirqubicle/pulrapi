@@ -55,13 +55,15 @@ namespace Core.Domain.Entities
         public virtual ICollection<ShippingDetails> ShippingDetails { get; set; }
         public virtual ICollection<SearchHistory> SearchHistories { get; set; } = new List<SearchHistory>();
 
-        // 6-digit password reset code and expiry
+        // Hashed password reset code, expiry, and failed-verification counter
         public string PasswordResetCode { get; set; }
         public DateTime? PasswordResetCodeExpiry { get; set; }
+        public int PasswordResetAttempts { get; set; }
 
-        // 6-digit email verification code and expiry
+        // Hashed email verification code, expiry, and failed-verification counter
         public string EmailVerificationCode { get; set; }
         public DateTime? EmailVerificationCodeExpiry { get; set; }
+        public int EmailVerificationAttempts { get; set; }
         public DateTime? LastReactivatedAt { get; set; }
 
         /// <summary>

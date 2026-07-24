@@ -7,6 +7,8 @@ namespace Core.Domain.Enums
         ExchangeCharge,
         ExchangeCredit,
         Refund,
-        Commission
+        Commission,
+        Payout,
+        Withdrawal, 
     }
 }

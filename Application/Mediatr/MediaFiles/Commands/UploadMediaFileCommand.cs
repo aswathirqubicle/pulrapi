@@ -1,6 +1,5 @@
 using AutoMapper;
 using MediatR;
-using Microsoft.AspNetCore.Http;
 using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Configuration;
 using Microsoft.Extensions.Logging;
@@ -12,8 +11,8 @@ using System.Threading;
 using System.Threading.Tasks;
 using Core.Application.Constants;
 using Core.Application.Helpers;
-using Core.Application.Interfaces; // For other services (ICurrentUserService, IApplicationDbContext, etc.)
-using Pulr.Contracts.Interfaces; // For cross-service interfaces (IVideoProcessingService)
+using Core.Application.Interfaces;
+using Pulr.Contracts.Interfaces;
 using Core.Application.Mediatr.MediaFiles.Commands;
 using Core.Application.Models;
 using Core.Application.Models.MediaFiles;
@@ -26,8 +25,8 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
 {
     public class UploadMediaFileCommand : IRequest<List<MediaFileDetailsResponse>>
     {
-        [Required, MaxFileSize(10 * 1024 * 1024), PulrFileValidation]
-        public List<IFormFile> Files { get; set; }
+        [Required]
+        public List<StreamingMediaFile> Files { get; set; }
         public string Type { get; set; }
         public bool MuteVideo { get; set; }
         public int? CropX { get; set; }
@@ -79,13 +78,24 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
 
                 foreach (var file in request.Files)
                 {
+                    // Determine file type from stream content
                     var fileTypeInfo = FileHelper.CheckFile(file);
+
+                    if (!fileTypeInfo.IsValid || !fileTypeInfo.IsValidExtension)
+                    {
+                        throw new ValidationException($"File '{file.FileName}' has an unsupported type or extension.");
+                    }
+
+                    // Reset stream position after CheckFile consumed it
+                    file.Stream.Position = 0;
+
                     var fileConfig = new FileUploadConfigDto()
                     {
-                        FileName = fileTypeInfo.Name,
+                        FileName = file.FileName,
                         BucketName = bucketName,
                         FolderPath = folderPath,
-                        File = file,
+                        FileStream = file.Stream,
+                        FileLength = file.Length,
                         ImageWidth = PulrGlobalConfig.PostImage.Width,
                         ImageHeight = PulrGlobalConfig.PostImage.Height,
                         FilterType = request.FilterType
@@ -95,7 +105,7 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
 
                     if (fileTypeInfo.FileType == FileTypeEnum.Image)
                     {
-                        // Handle image upload (existing logic)
+                        // Handle image upload (streaming, no temp files)
                         var imageUrl = await _fileUploadService.UploadImage(fileConfig);
                         
                         mediaFile = new MediaFile()
@@ -107,18 +117,30 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
                             FilterType = request.FilterType
                         };
                     }
+                    else if (fileTypeInfo.FileType == FileTypeEnum.Document)
+                    {
+                        var documentUrl = await _fileUploadService.UploadDocument(fileConfig);
+                        
+                        mediaFile = new MediaFile()
+                        {
+                            Priority = 0,
+                            MediaFileType = MediaFileTypeEnum.Document,
+                            Url = documentUrl,
+                            Uid = Guid.NewGuid().ToString(),
+                        };
+                    }
                     else // Video
                     {
-                        // Upload original video immediately (fast, no timeout)
+                        // Upload original video directly from stream (no temp files)
                         var videoUrl = await _fileUploadService.UploadVideo(fileConfig);
 
                         mediaFile = new MediaFile()
                         {
                             Priority = 0,
                             MediaFileType = MediaFileTypeEnum.Video,
-                            Url = videoUrl, // Original video URL
+                            Url = videoUrl,
                             OriginalUrl = videoUrl,
-                            IsHlsProcessed = false, // Will be updated by background job
+                            IsHlsProcessed = false,
                             HlsBasePath = null,
                             VideoDurationSeconds = null,
                             AvailableQualities = null,
@@ -140,7 +162,7 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
 
                 await _dbContext.SaveChangesAsync(CancellationToken.None);
 
-                // Queue background HLS transcoding jobs for videos (only if not a thumbnail type, though thumbnails are usually images)
+                // Queue background HLS transcoding jobs for videos
                 if (request.Type != "Thumbnail")
                 {
                     foreach (var mediaFileResponse in response.Where(r => r.FileType == "Video"))
@@ -150,8 +172,6 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
                         
                         if (mediaFileEntity != null && !mediaFileEntity.IsHlsProcessed)
                         {
-                            // Queue background job for HLS transcoding (to 'cron' schema for PulrWorker)
-                            // Use fully qualified name to avoid ambiguity with Core.Application.Interfaces.IVideoProcessingService
                             _videoJobClient.Enqueue<Pulr.Contracts.Interfaces.IVideoProcessingService>(
                                 service => service.ProcessHlsTranscodingAsync(mediaFileEntity.Id));
                             
@@ -169,5 +189,4 @@ namespace Core.Application.Mediatr.MediaFiles.Commands
             }
         }
     }
-
 }

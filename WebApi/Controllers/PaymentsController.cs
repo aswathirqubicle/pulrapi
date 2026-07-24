@@ -5,6 +5,7 @@ using Core.Application.Interfaces;
 using Core.Application.Models.Stripe;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Logging;
 using Stripe;
 
 namespace WebApi.Controllers;
@@ -15,11 +16,13 @@ public class PaymentsController : ApiControllerBase
 {
     private readonly IStripeService _stripeService;
     private readonly ICurrentUserService _currentUserService;
+    private readonly ILogger<PaymentsController> _logger;
 
-    public PaymentsController(IStripeService stripeService, ICurrentUserService currentUserService)
+    public PaymentsController(IStripeService stripeService, ICurrentUserService currentUserService, ILogger<PaymentsController> logger)
     {
         _stripeService = stripeService;
         _currentUserService = currentUserService;
+        _logger = logger;
     }
 
     /// <summary>
@@ -31,7 +34,7 @@ public class PaymentsController : ApiControllerBase
     /// - On payment failure: Success = false, Error message, CheckoutSummary still included.
     /// </summary>
     [HttpPost]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<CreatePaymentResponse>> CreatePayment([FromBody] CreatePaymentRequest request)
     {
         if (!_currentUserService.IsUserLoggedIn())
@@ -52,7 +55,10 @@ public class PaymentsController : ApiControllerBase
             Products = request.Products,
             ShippingDetailsUid = request.ShippingDetailsUid,
             BillingDetailsUid = request.BillingAddressDetailsUid,
-            ReturnUrl = request.ReturnUrl
+            ReturnUrl = request.ReturnUrl,
+            IsExchange = request.IsExchange,
+            ExchangeOrderUid = request.ExchangeOrderUid,
+            ExchangeItems = request.ExchangeItems ?? new()
         };
 
         var result = await Mediator.Send(command);
@@ -76,7 +82,7 @@ public class PaymentsController : ApiControllerBase
     }
 
     [HttpPost("customer-session")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<CreateCustomerSessionResponse>> CreateCustomerSession(
         [FromBody] CreateCustomerSessionRequest? request = null)
     {
@@ -88,7 +94,8 @@ public class PaymentsController : ApiControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message });
+            _logger.LogError(ex, "Error creating customer session");
+            return StatusCode(500, new { error = "An unexpected error occurred." });
         }
     }
 
@@ -97,7 +104,7 @@ public class PaymentsController : ApiControllerBase
     /// Uses the logged-in user's StripeCustomerId from database.
     /// </summary>
     [HttpGet("customer")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<CustomerResponse>> GetCustomer()
     {
         try
@@ -107,28 +114,32 @@ public class PaymentsController : ApiControllerBase
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Unauthorized(new { error = ex.Message });
+            _logger.LogWarning(ex, "Unauthorized access getting customer");
+            return Unauthorized(new { error = "Unauthorized." });
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            _logger.LogWarning(ex, "Bad argument getting customer");
+            return BadRequest(new { error = "Invalid request." });
         }
         catch (StripeException ex)
         {
+            _logger.LogError(ex, "Stripe error getting customer");
             if (ex.StripeError?.Code == "resource_missing")
             {
                 return NotFound(new { error = "Customer not found." });
             }
-            return StatusCode(500, new { error = ex.Message });
+            return StatusCode(500, new { error = "A payment service error occurred." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message });
+            _logger.LogError(ex, "Unexpected error getting customer");
+            return StatusCode(500, new { error = "An unexpected error occurred." });
         }
     }
 
     [HttpGet("payment-methods")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<IReadOnlyList<PaymentMethodResponse>>> GetSavedPaymentMethods()
     {
         try
@@ -138,24 +149,28 @@ public class PaymentsController : ApiControllerBase
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Unauthorized(new { error = ex.Message });
+            _logger.LogWarning(ex, "Unauthorized access getting payment methods");
+            return Unauthorized(new { error = "Unauthorized." });
         }
         catch (ArgumentException ex)
         {
-            return BadRequest(new { error = ex.Message });
+            _logger.LogWarning(ex, "Bad argument getting payment methods");
+            return BadRequest(new { error = "Invalid request." });
         }
         catch (StripeException ex)
         {
-            return StatusCode(500, new { error = ex.Message });
+            _logger.LogError(ex, "Stripe error getting payment methods");
+            return StatusCode(500, new { error = "A payment service error occurred." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message });
+            _logger.LogError(ex, "Unexpected error getting payment methods");
+            return StatusCode(500, new { error = "An unexpected error occurred." });
         }
     }
 
     [HttpPost("save-card")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<SaveCardResponse>> SaveCardDirect([FromBody] SaveCardRequest request)
     {
         try
@@ -171,16 +186,17 @@ public class PaymentsController : ApiControllerBase
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new SaveCardResponse 
-            { 
-                Success = false, 
-                Error = ex.Message 
+            _logger.LogError(ex, "Unexpected error saving card");
+            return StatusCode(500, new SaveCardResponse
+            {
+                Success = false,
+                Error = "An unexpected error occurred."
             });
         }
     }
 
     [HttpDelete("payment-methods/{paymentMethodId}")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<bool>> RemovePaymentMethod(string paymentMethodId)
     {
         if (!_currentUserService.IsUserLoggedIn())
@@ -204,7 +220,7 @@ public class PaymentsController : ApiControllerBase
     }
 
     [HttpPut("payment-methods/{paymentMethodId}/default")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<bool>> SetDefaultPaymentMethod(string paymentMethodId)
     {
         if (!_currentUserService.IsUserLoggedIn())
@@ -233,7 +249,7 @@ public class PaymentsController : ApiControllerBase
     /// Requires authentication.
     /// </summary>
     [HttpPost("setup-intent")]
-    [AllowAnonymous]
+    [Authorize]
     public async Task<ActionResult<SetupIntentResponse>> CreateSetupIntent()
     {
         if (!_currentUserService.IsUserLoggedIn())
@@ -248,11 +264,13 @@ public class PaymentsController : ApiControllerBase
         }
         catch (UnauthorizedAccessException ex)
         {
-            return Unauthorized(new { error = ex.Message });
+            _logger.LogWarning(ex, "Unauthorized access creating setup intent");
+            return Unauthorized(new { error = "Unauthorized." });
         }
         catch (Exception ex)
         {
-            return StatusCode(500, new { error = ex.Message });
+            _logger.LogError(ex, "Unexpected error creating setup intent");
+            return StatusCode(500, new { error = "An unexpected error occurred." });
         }
     }
 

@@ -13,6 +13,8 @@ namespace Core.Application.Models.Orders
         public ShippingDetailsResponse ShippingDetails { get; set; }
         public ShippingDetailsResponse BillingDetails { get; set; }
         public decimal Amount { get; set; }
+        public decimal? Vat { get; set; }
+        public PaymentBreakdownResponse? PaymentBreakdown { get; set; }
         public string BuyerFullName { get; set; }
         public List<string> SellerFullNames { get; set; }
         public bool IsProcessing { get; set; }

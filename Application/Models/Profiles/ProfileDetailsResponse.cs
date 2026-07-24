@@ -33,6 +33,7 @@ public class ProfileDetailsResponse : IMapFrom<Profile>
     public ICollection<ProfileSocialMediaLinkDto> SocialMediaLinks { get; set; } = new List<ProfileSocialMediaLinkDto>();
     public string Email { get; set; }
     public bool FollowedByMe { get; set; }
+    public bool IsFollowingMe { get; set; }
     public bool FollowRequestSent { get; set; } // True when current user has sent any follow request (regular or followback)
     public bool FollowRequestReceived { get; set; }
     public bool CanFollowBack { get; set; } // True when the viewed profile follows current user but current user doesn't follow back

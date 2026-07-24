@@ -18,7 +18,7 @@ phases:
           cd WebApi
           aws secretsmanager get-secret-value --secret-id pulr-dev-backend-secrets --query SecretString --output text > appsettings.Production.json
           dotnet build --configuration Release
-          dotnet publish --configuration Release /p:EnvironmentName=Development -o publish
+          dotnet publish --configuration Release -o publish
           cd ..
         else
           echo "Error: WebApi directory not found"

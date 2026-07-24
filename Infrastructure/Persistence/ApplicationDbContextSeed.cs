@@ -33,6 +33,8 @@ namespace Core.Infrastructure.Persistence
             await SeedPaymentMethods(dbContext);
             await SeedOnboardingPreferences(dbContext);
             await SeedVibes(dbContext);
+            await SeedPlatformSettings(dbContext);
+            await SeedPaymentFeeSettings(dbContext);
         }
 
         private static async Task SeedGenders(IApplicationDbContext dbContext)
@@ -1002,10 +1004,24 @@ namespace Core.Infrastructure.Persistence
                     }
                 }
 
+                var defaultUserName = configuration["DefaultUser:Username"];
+                var defaultUserEmail = configuration["DefaultUser:Email"];
+                var defaultUserPassword = configuration["DefaultUser:Password"];
+
+                // Only seed the default administrator when all credentials are
+                // explicitly configured. Never create an admin with an empty/null
+                // password.
+                if (string.IsNullOrWhiteSpace(defaultUserName)
+                    || string.IsNullOrWhiteSpace(defaultUserEmail)
+                    || string.IsNullOrWhiteSpace(defaultUserPassword))
+                {
+                    return;
+                }
+
                 var defaultUser = new User
                 {
-                    UserName = configuration["DefaultUser:Username"],
-                    Email = configuration["DefaultUser:Email"],
+                    UserName = defaultUserName,
+                    Email = defaultUserEmail,
                     EmailConfirmed = true,
                     PhoneNumberConfirmed = true,
                     Id = Guid.NewGuid().ToString()
@@ -1013,7 +1029,7 @@ namespace Core.Infrastructure.Persistence
 
                 if (!userManager.Users.Where(u => u.UserName == defaultUser.UserName).Any())
                 {
-                    var res = await userManager.CreateAsync(defaultUser, configuration["DefaultUser:Password"]);
+                    var res = await userManager.CreateAsync(defaultUser, defaultUserPassword);
                     await userManager.AddToRoleAsync(defaultUser,
                         roleManager.Roles.SingleOrDefault(r => r.Name == PulrRoles.Administrator).NormalizedName);
                 }
@@ -1021,6 +1037,60 @@ namespace Core.Infrastructure.Persistence
             catch (Exception)
             {
                 throw;
+            }
+        }
+
+        private static async Task SeedPlatformSettings(IApplicationDbContext dbContext)
+        {
+            try
+            {
+                if (!dbContext.PlatformSettings.Any())
+                {
+                    dbContext.PlatformSettings.Add(new PlatformSetting
+                    {
+                        CommissionRate = 0.01m,
+                        VatRate = 0.05m,
+                        PlatformFeePercentage = 0.25m,
+                        DirectSaleSellerPercentage = 0.75m,
+                        CollabSaleSellerPercentage = 0.65m,
+                        CollabSaleCreatorPercentage = 0.10m,
+                        MinimumWithdrawalAmount = 50.00m,
+                        DeliveryExtensionHours = 72,
+                        RefundWindowDays = 3,
+                        ExchangeWindowDays = 21,
+                        EscrowHoldDays = 21
+                    });
+                    await dbContext.SaveChangesAsync(CancellationToken.None);
+                }
+            }
+            catch (Exception e)
+            {
+                throw new Exception("An error occurred while seeding platform settings", e);
+            }
+        }
+
+        private static async Task SeedPaymentFeeSettings(IApplicationDbContext dbContext)
+        {
+            try
+            {
+                if (!dbContext.PaymentFeeSettings.Any())
+                {
+                    var aed = await dbContext.Currencies.SingleOrDefaultAsync(c => c.Code == "AED");
+                    if (aed != null)
+                    {
+                        dbContext.PaymentFeeSettings.Add(new PaymentFeeSetting
+                        {
+                            CurrencyId = aed.Id,
+                            FeePercentage = 0.039m,
+                            FixedFee = 1.00m
+                        });
+                        await dbContext.SaveChangesAsync(CancellationToken.None);
+                    }
+                }
+            }
+            catch (Exception e)
+            {
+                throw new Exception("An error occurred while seeding payment fee settings", e);
             }
         }
 

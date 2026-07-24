@@ -32,11 +32,19 @@ namespace Core.Application.Constants
 
         public static class OrderSettings
         {
-            /// <summary>
-            /// Number of hours buyer can extend delivery countdown for shipped items.
-            /// Can only be extended once per item.
-            /// </summary>
             public const int DeliveryExtensionHours = 72;
+            public const int RefundWindowDays = 3;
+            public const int ExchangeWindowDays = 21;
+            public const int EscrowHoldDays = 21;
+            public const decimal DefaultCommissionRate = 0.01m;
+            public const decimal DefaultVatRate = 0.05m;
+            public const decimal DefaultPlatformFeePercentage = 0.25m;
+            public const decimal DefaultDirectSaleSellerPercentage = 0.75m;
+            public const decimal DefaultCollabSaleSellerPercentage = 0.65m;
+            public const decimal DefaultCollabSaleCreatorPercentage = 0.10m;
+            public const decimal DefaultMinimumWithdrawalAmount = 50.00m;
+            public const decimal DefaultStripeFeePercentage = 0.039m;
+            public const decimal DefaultStripeFixedFee = 1.00m;
         }
     }
 }

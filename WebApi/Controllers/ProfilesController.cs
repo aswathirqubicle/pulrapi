@@ -143,17 +143,35 @@ namespace WebApi.Controllers
 
         [AllowAnonymous]
         [HttpGet("{profileUid}/followers")]
-        public async Task<ActionResult<PagingResponse<ProfileDetailsResponse>>> GetProfileFollowers(string profileUid)
+        public async Task<ActionResult<PagingResponse<ProfileDetailsResponse>>> GetProfileFollowers(
+            string profileUid,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 20,
+            [FromQuery] string search = null)
         {
-            var res = await Mediator.Send(new GetProfileFollowersQuery() { ProfileUid = profileUid });
+            var res = await Mediator.Send(new GetProfileFollowersQuery
+            {
+                ProfileUid = profileUid,
+                PageNumber = pageNumber,
+                PageSize   = pageSize,
+                Search     = search
+            });
             return Ok(res);
         }
 
         [AllowAnonymous]
         [HttpGet("{profileUid}/followings")]
-        public async Task<ActionResult<PagingResponse<ProfileDetailsResponse>>> GetProfileFollowings(string profileUid)
+        public async Task<ActionResult<PagingResponse<ProfileDetailsResponse>>> GetProfileFollowings(
+            string profileUid,
+            [FromQuery] int pageNumber = 1,
+            [FromQuery] int pageSize = 20)
         {
-            var res = await Mediator.Send(new GetProfileFollowingsQuery() { ProfileUid = profileUid });
+            var res = await Mediator.Send(new GetProfileFollowingsQuery
+            {
+                ProfileUid = profileUid,
+                PageNumber = pageNumber,
+                PageSize   = pageSize
+            });
             return Ok(res);
         }
 

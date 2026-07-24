@@ -1,4 +1,4 @@
-﻿
+﻿using System.IO;
 using Microsoft.AspNetCore.Http;
 
 namespace Core.Application.Models
@@ -6,6 +6,8 @@ namespace Core.Application.Models
     public class FileUploadConfigDto
     {
         public IFormFile File { get; set; }
+        public Stream FileStream { get; set; }
+        public long? FileLength { get; set; }
         public string FileName { get; set; }
         public string OldFileName { get; set; }
         public string BucketName { get; set; }

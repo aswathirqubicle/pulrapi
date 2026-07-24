@@ -59,6 +59,9 @@ namespace Core.Application.Mediatr.Products.Commands
         // Default values for auto-generated combinations
         public decimal? DefaultCombinationPrice { get; set; }
         public int DefaultQuantity { get; set; } = 5;
+
+        [SafeUid(allowNullValue: true, ErrorMessage = "CollabId contains invalid characters or format.")]
+        public string? CollabId { get; set; }
     }
 
     public class ProductCreateCommandHandler : IRequestHandler<ProductCreateCommand, ProductDetailsResponse>
@@ -125,6 +128,7 @@ namespace Core.Application.Mediatr.Products.Commands
                     Type = request.Type,
                     SellType = request.SellType,
                     UserId = user.Id,
+                    CollabId = request.CollabId,
                     CreatedAt = DateTime.UtcNow,
                     IsActive = true
                 };
@@ -241,7 +245,7 @@ namespace Core.Application.Mediatr.Products.Commands
                     .FirstOrDefaultAsync(cancellationToken);
 
                 // Map to response
-                var productResponse = new ProductDetailsResponse
+var productResponse = new ProductDetailsResponse
                 {
                     Uid = product.Uid,
                     Name = product.Name,
@@ -255,6 +259,7 @@ namespace Core.Application.Mediatr.Products.Commands
                     ProductUrl = product.ProductUrl,
                     Type = product.Type,
                     SellType = product.SellType,
+                    CollabId = product.CollabId,
                     CreatedAt = product.CreatedAt,
                     ProductMediaFiles = mediaFiles,
                     ProductVariants = productVariants.Select(pv => new ProductVariantResponse

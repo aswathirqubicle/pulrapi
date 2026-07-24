@@ -126,6 +126,20 @@ namespace Core.Application.Services
             _context.Activities.Add(activity);
 
             // Save notification history for the owner
+            var targetName = targetType switch
+            {
+                EntityTypeEnum.POST => "post",
+                EntityTypeEnum.STORY => "story",
+                EntityTypeEnum.PRODUCT => "product",
+                EntityTypeEnum.COMMENT => "comment",
+                _ => "content"
+            };
+            var actorName = await _context.Profiles
+                .Where(p => p.UserId == likerUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var title = "New Like";
+            var body = $"liked your {targetName}.";
             var notification = new NotificationHistory
             {
                 ReceiverUserId = ownerProfileId,
@@ -133,7 +147,9 @@ namespace Core.Application.Services
                 ActionType = NotificationActionTypeEnum.Like,
                 TargetId = targetId,
                 TargetType = targetType,
-                IsRead = false
+                IsRead = false,
+                Title = title,
+                Body = body
             };
             _context.NotificationHistories.Add(notification);
 
@@ -180,6 +196,15 @@ namespace Core.Application.Services
             };
             _context.Activities.Add(activity);
 
+            // Get commenter name for title/body
+            var commenterName = await _context.Profiles
+                .Where(p => p.UserId == commenterUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var truncatedComment = commentText.Length > 50 ? commentText.Substring(0, 47) + "..." : commentText;
+            var commentTitle = "New Comment";
+            var commentBody = $"commented: \"{truncatedComment}\"";
+
             // Save notification history for the post owner
             var notification = new NotificationHistory
             {
@@ -189,7 +214,9 @@ namespace Core.Application.Services
                 TargetId = postId,
                 IsRead = false,
                 CommentText = commentText,
-                TargetType = EntityTypeEnum.COMMENT
+                TargetType = EntityTypeEnum.COMMENT,
+                Title = commentTitle,
+                Body = commentBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -236,6 +263,15 @@ namespace Core.Application.Services
             };
             _context.Activities.Add(activity);
 
+            // Get commenter name for title/body
+            var productCommenterName = await _context.Profiles
+                .Where(p => p.UserId == commenterUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var truncatedProductComment = commentText.Length > 50 ? commentText.Substring(0, 47) + "..." : commentText;
+            var productCommentTitle = "New Comment";
+            var productCommentBody = $"commented: \"{truncatedProductComment}\"";
+
             // Save notification history for the product owner
             var notification = new NotificationHistory
             {
@@ -245,7 +281,9 @@ namespace Core.Application.Services
                 TargetId = productId,
                 IsRead = false,
                 CommentText = commentText,
-                TargetType = EntityTypeEnum.PRODUCT
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = productCommentTitle,
+                Body = productCommentBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -293,6 +331,14 @@ namespace Core.Application.Services
             };
             _context.Activities.Add(activity);
 
+            // Get post owner name for title/body
+            var postOwnerName = await _context.Profiles
+                .Where(p => p.UserId == postOwnerUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var newPostTitle = "New Post";
+            var newPostBody = "created a new post.";
+
             // Save notification history for followers
             var notifications = followers.Select(follower => new NotificationHistory
             {
@@ -300,7 +346,9 @@ namespace Core.Application.Services
                 ActorUserId = postOwnerProfile.Id,
                 ActionType = NotificationActionTypeEnum.NewPost,
                 TargetId = postId,
-                IsRead = false
+                IsRead = false,
+                Title = newPostTitle,
+                Body = newPostBody
             }).ToList();
 
             _context.NotificationHistories.AddRange(notifications);
@@ -376,6 +424,14 @@ namespace Core.Application.Services
                 targetId = story.Uid;
             }
 
+            // Get story owner name for title/body
+            var storyOwnerName = await _context.Profiles
+                .Where(p => p.UserId == storyOwnerUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var newStoryTitle = "New Story";
+            var newStoryBody = "created a new story.";
+
             // Activity
             var activity = new Activity
             {
@@ -394,7 +450,9 @@ namespace Core.Application.Services
                 ActionType = NotificationActionTypeEnum.Story,
                 TargetId = targetId,
                 IsRead = false,
-                TargetType = targetType
+                TargetType = targetType,
+                Title = newStoryTitle,
+                Body = newStoryBody
             }).ToList();
             _context.NotificationHistories.AddRange(notifications);
             await _context.SaveChangesAsync(cancellationToken: default);
@@ -471,6 +529,14 @@ namespace Core.Application.Services
             };
             _context.Activities.Add(activity);
 
+            // Get mentioned by user name for title/body
+            var mentionerName = await _context.Profiles
+                .Where(p => p.UserId == mentionedByUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var mentionTitle = "You were mentioned";
+            var mentionBody = $"tagged you in a {mentionType.ToLower()}";
+
             // Save notification history for the mentioned user
             var notification = new NotificationHistory
             {
@@ -479,7 +545,9 @@ namespace Core.Application.Services
                 ActionType = NotificationActionTypeEnum.Mention,
                 TargetId = targetId,
                 TargetType = mentionType == "Post" ? EntityTypeEnum.POST : EntityTypeEnum.COMMENT,
-                IsRead = false
+                IsRead = false,
+                Title = mentionTitle,
+                Body = mentionBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -516,7 +584,7 @@ namespace Core.Application.Services
                     .Where(p => p.UserId == likerUserId)
                     .Select(p => p.User.UserName)
                     .FirstOrDefaultAsync();
-                var title = $"{liker}";
+                var title = "New Like";
                 string body;
                 object data;
                 var batchCount = await GetUnreadNotificationCountAsync(receiverUserId);
@@ -543,7 +611,7 @@ namespace Core.Application.Services
                 switch (targetType)
                 {
                     case EntityTypeEnum.POST:
-                        body = "liked your post.";
+                        body = $"{liker} liked your post.";
                         var likedPostThumbnail = await _context.Posts
                             .Where(p => p.Uid == targetId)
                             .Select(p => string.IsNullOrEmpty(p.ThumbnailUrl)
@@ -645,7 +713,7 @@ namespace Core.Application.Services
                 
                 _logger.LogInformation("Found {TokenCount} valid push tokens for user {UserId}", userTokens.Count, receiverUserId);
                 var commenter = await _context.Profiles
-                    .Where(p => p.Uid == commenterUserId)
+                    .Where(p => p.UserId == commenterUserId)
                     .Select(p => p.User.UserName)
                     .FirstOrDefaultAsync();
                 var title = $"{commenter}";
@@ -710,7 +778,7 @@ namespace Core.Application.Services
                 if (!userTokens.Any())
                     return;
                 var commenter = await _context.Profiles
-                    .Where(p => p.Uid == commenterUserId)
+                    .Where(p => p.UserId == commenterUserId)
                     .Select(p => p.User.UserName)
                     .FirstOrDefaultAsync();
                 var title = $"{commenter}";
@@ -919,6 +987,23 @@ namespace Core.Application.Services
             if (followerProfile == 0 || followedProfile == 0)
                 throw new ArgumentException("Profile not found");
 
+            // Prevent duplicate follow notifications (guards against concurrent requests)
+            var existingNotification = await _context.NotificationHistories
+                .FirstOrDefaultAsync(n =>
+                    n.ReceiverUserId == followedProfile &&
+                    n.ActorUserId == followerProfile &&
+                    n.ActionType == NotificationActionTypeEnum.Follow);
+            if (existingNotification != null)
+                return;
+
+            // Get follower name for title/body
+            var followerName = await _context.Profiles
+                .Where(p => p.UserId == followerUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var followTitle = "New Follower";
+            var followBody = "started following you";
+
             // Save notification history for the followed user
             var notification = new NotificationHistory
             {
@@ -927,7 +1012,9 @@ namespace Core.Application.Services
                 ActionType = NotificationActionTypeEnum.Follow,
                 TargetId = profileUid,
                 IsRead = false,
-                TargetType = EntityTypeEnum.PROFILE
+                TargetType = EntityTypeEnum.PROFILE,
+                Title = followTitle,
+                Body = followBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -943,9 +1030,9 @@ namespace Core.Application.Services
             var requesterProfileData = await _context.Profiles
                 .Include(p => p.ProfileSettings)
                 .Where(p => p.Uid == requesterProfileUid)
-                .Select(p => new { 
-                    p.Id, 
-                    IsProfilePublic = p.ProfileSettings != null ? p.ProfileSettings.IsProfilePublic : true 
+                .Select(p => new {
+                    p.Id,
+                    IsProfilePublic = p.ProfileSettings != null ? p.ProfileSettings.IsProfilePublic : true
                 })
                 .FirstOrDefaultAsync();
 
@@ -958,6 +1045,23 @@ namespace Core.Application.Services
             if (requesterProfileData == null || requesterProfileData.Id == 0 || targetProfile == 0)
                 throw new ArgumentException("Profile not found");
 
+            // Prevent duplicate follow request notifications (guards against concurrent requests)
+            var existingNotification = await _context.NotificationHistories
+                .FirstOrDefaultAsync(n =>
+                    n.ReceiverUserId == targetProfile &&
+                    n.ActorUserId == requesterProfileData.Id &&
+                    n.ActionType == NotificationActionTypeEnum.FollowRequest);
+            if (existingNotification != null)
+                return;
+
+            // Get requester name for title/body
+            var requesterName = await _context.Profiles
+                .Where(p => p.Uid == requesterProfileUid)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var followRequestTitle = "Follow Request";
+            var followRequestBody = "requested to follow you";
+
             // Save notification history for the target user
             var notification = new NotificationHistory
             {
@@ -967,7 +1071,9 @@ namespace Core.Application.Services
                 TargetId = targetProfileUid,
                 IsRead = false,
                 TargetType = EntityTypeEnum.PROFILE,
-                RequesterProfileType = requesterProfileData.IsProfilePublic ? "public" : "private" // Store requester's profile type
+                RequesterProfileType = requesterProfileData.IsProfilePublic ? "public" : "private",
+                Title = followRequestTitle,
+                Body = followRequestBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -1115,16 +1221,30 @@ namespace Core.Application.Services
             if (existingNotification != null)
                 return; // Notification already exists, don't create duplicate
 
+            // Get sender name and collection name for title/body
+            var senderName = await _context.Profiles
+                .Where(p => p.UserId == senderUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var collectionName = await _context.BookmarkCollections
+                .Where(c => c.Uid == collectionUid)
+                .Select(c => c.Name)
+                .FirstOrDefaultAsync() ?? "a collection";
+            var collectionShareTitle = "Collection Shared";
+            var collectionShareBody = $"shared a collection with you: {collectionName}";
+
             // Save to notification history
             var notification = new NotificationHistory
             {
                 ReceiverUserId = receiverProfile,
                 ActorUserId = follerProfileId,
-                ActionType = NotificationActionTypeEnum.CollectionShare, // Add this to your enum
-                TargetType = EntityTypeEnum.COLLECTION, // Add this to your enum
+                ActionType = NotificationActionTypeEnum.CollectionShare,
+                TargetType = EntityTypeEnum.COLLECTION,
                 TargetId = collectionUid,
                 CommentText = message,
-                IsRead = false
+                IsRead = false,
+                Title = collectionShareTitle,
+                Body = collectionShareBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -1250,6 +1370,11 @@ namespace Core.Application.Services
                         NotificationActionTypeEnum.Follow => settings.Follows,
                         NotificationActionTypeEnum.FollowRequest => settings.Follows, // Use Follows setting for follow requests
                         NotificationActionTypeEnum.CollectionShare => settings.Follows, // Use Follows setting for collection shares
+                        NotificationActionTypeEnum.RefundRequest => true,
+                        NotificationActionTypeEnum.RefundApproved => true,
+                        NotificationActionTypeEnum.RefundRejected => true,
+                        NotificationActionTypeEnum.RefundDisputed => true,
+                        NotificationActionTypeEnum.RefundResolved => true,
                         _ => true
                     };
 
@@ -1581,22 +1706,24 @@ namespace Core.Application.Services
                     ActionType = n.ActionType.ToString(),
                     ReceiverUserId = n.ReceiverProfile.UserId,
                     ReceiverName = n.ReceiverProfile.User.UserName,
-                    PostId = n.TargetId,
+PostId = n.TargetId,
                     PostImageUrl = n.TargetType == EntityTypeEnum.POST
                         ? _context.Posts.Where(p => p.Uid == n.TargetId).Select(p => string.IsNullOrEmpty(p.ThumbnailUrl) ? (p.MediaFile != null ? (p.MediaFile.OriginalUrl ?? p.MediaFile.Url) : null) : p.ThumbnailUrl).FirstOrDefault()
                         : n.TargetType == EntityTypeEnum.COMMENT && n.ActionType == NotificationActionTypeEnum.Comment
                             ? _context.Posts.Where(p => p.Uid == n.TargetId).Select(p => string.IsNullOrEmpty(p.ThumbnailUrl) ? (p.MediaFile != null ? (p.MediaFile.OriginalUrl ?? p.MediaFile.Url) : null) : p.ThumbnailUrl).FirstOrDefault()
-                        : n.TargetType == EntityTypeEnum.COMMENT && (n.ActionType == NotificationActionTypeEnum.Mention || n.ActionType == NotificationActionTypeEnum.Like)
-                            ? _context.Comments.Where(c => c.Uid == n.TargetId).Select(c => string.IsNullOrEmpty(c.Post.ThumbnailUrl) ? (c.Post.MediaFile != null ? (c.Post.MediaFile.OriginalUrl ?? c.Post.MediaFile.Url) : null) : c.Post.ThumbnailUrl).FirstOrDefault()
-                        : n.ActionType == NotificationActionTypeEnum.CollectionShare && n.TargetType == EntityTypeEnum.COLLECTION
-                            ? _context.BookmarkCollections
-                                .Where(c => c.Uid == n.TargetId)
-                                .Select(c => c.BookmarkCollectionItems
-                                    .OrderByDescending(bci => bci.CreatedAt)
-                                    .Select(bci => string.IsNullOrEmpty(bci.Post.ThumbnailUrl) ? (bci.Post.MediaFile != null ? (bci.Post.MediaFile.OriginalUrl ?? bci.Post.MediaFile.Url) : null) : bci.Post.ThumbnailUrl)
-                                    .FirstOrDefault())
-                                .FirstOrDefault()
-                            : null,
+                            : n.TargetType == EntityTypeEnum.COMMENT && (n.ActionType == NotificationActionTypeEnum.Mention || n.ActionType == NotificationActionTypeEnum.Like)
+                                ? _context.Comments.Where(c => c.Uid == n.TargetId).Select(c => string.IsNullOrEmpty(c.Post.ThumbnailUrl) ? (c.Post.MediaFile != null ? (c.Post.MediaFile.OriginalUrl ?? c.Post.MediaFile.Url) : null) : c.Post.ThumbnailUrl).FirstOrDefault()
+                                : n.TargetType == EntityTypeEnum.PROFILE || n.TargetType == EntityTypeEnum.COLLAB_INVITE || n.TargetType == EntityTypeEnum.COLLAB
+                                    ? n.ActorProfile.ImageUrl  // Follow, Collab notifications use actor's avatar
+                                    : n.ActionType == NotificationActionTypeEnum.CollectionShare && n.TargetType == EntityTypeEnum.COLLECTION
+                                        ? _context.BookmarkCollections
+                                            .Where(c => c.Uid == n.TargetId)
+                                            .Select(c => c.BookmarkCollectionItems
+                                                .OrderByDescending(bci => bci.CreatedAt)
+                                                .Select(bci => string.IsNullOrEmpty(bci.Post.ThumbnailUrl) ? (bci.Post.MediaFile != null ? (bci.Post.MediaFile.OriginalUrl ?? bci.Post.MediaFile.Url) : null) : bci.Post.ThumbnailUrl)
+                                                .FirstOrDefault())
+                                            .FirstOrDefault()
+                                        : null,
                     StoryImageUrl = n.TargetType == EntityTypeEnum.STORY
                         ? _context.Stories.Where(s => s.Uid == n.TargetId).Select(s => s.MediaFile.Url).FirstOrDefault()
                         : null,
@@ -1618,6 +1745,12 @@ namespace Core.Application.Services
                               n.ActionType == NotificationActionTypeEnum.FollowRequestAccepted ? "Follow Request Accepted" :
                               n.ActionType == NotificationActionTypeEnum.CollectionShare ?
                                 _context.BookmarkCollections.Where(c => c.Uid == n.TargetId).Select(c => c.Name).FirstOrDefault() :
+                              n.ActionType == NotificationActionTypeEnum.Collab_invite ? "Collaboration Invite" :
+                              n.ActionType == NotificationActionTypeEnum.Collab_reject ? "Invitation Declined" :
+                              n.ActionType == NotificationActionTypeEnum.Collab_accept ? "Invitation Accepted" :
+                              n.ActionType == NotificationActionTypeEnum.Collab_review ? "Content Submitted" :
+                              n.ActionType == NotificationActionTypeEnum.Collab_feedback ? "Feedback Received" :
+                              n.ActionType == NotificationActionTypeEnum.Collab_approved ? "Collab Approved" :
                               null,
                     // check if the actor is followed by the receiver
                     ReceriverFollweredByActor = _context.ProfileFollowers
@@ -1628,7 +1761,10 @@ namespace Core.Application.Services
                         !_context.ProfileFollowers
                         .Any(pf => pf.Profile.Uid == n.ActorProfile.Uid && pf.Follower.Uid == n.ReceiverProfile.Uid),
                     TargetType = n.TargetType,
-                    RequesterProfileType = n.RequesterProfileType // Include requester's profile type for follow request notifications
+                    RequesterProfileType = n.RequesterProfileType, // Include requester's profile type for follow request notifications
+                    Title = n.Title,
+                    Body = n.Body,
+                    FollowerCount = n.FollowerCount
 
                 })
                 .ToListAsync();
@@ -1661,6 +1797,14 @@ namespace Core.Application.Services
             if (accepterProfileData == null || requesterProfile == 0)
                 throw new ArgumentException("Profile not found");
 
+            // Get accepter name for title/body
+            var accepterName = await _context.Profiles
+                .Where(p => p.UserId == accepterUserId)
+                .Select(p => p.User.UserName)
+                .FirstOrDefaultAsync() ?? "Someone";
+            var followAcceptedTitle = "Follow Request Accepted";
+            var followAcceptedBody = "accepted your follow request";
+
             // Save notification history for the requester (the one who originally sent the follow request)
             var notification = new NotificationHistory
             {
@@ -1670,7 +1814,9 @@ namespace Core.Application.Services
                 TargetId = profileUid,
                 IsRead = false,
                 TargetType = EntityTypeEnum.PROFILE,
-                RequesterProfileType = accepterProfileData.IsProfilePublic ? "public" : "private" // Store accepter's profile type
+                RequesterProfileType = accepterProfileData.IsProfilePublic ? "public" : "private",
+                Title = followAcceptedTitle,
+                Body = followAcceptedBody
             };
             _context.NotificationHistories.Add(notification);
 
@@ -1714,6 +1860,185 @@ namespace Core.Application.Services
             catch (Exception ex)
             {
                 _logger.LogError(ex, "Error sending follow request accepted push notification to user {UserId}", receiverUserId);
+            }
+        }
+
+        public async Task SaveRefundRequestNotificationAsync(int buyerProfileId, int sellerProfileId, string orderProductAffiliateUid)
+        {
+            var notification = new NotificationHistory
+            {
+                ReceiverUserId = sellerProfileId,
+                ActorUserId = buyerProfileId,
+                ActionType = NotificationActionTypeEnum.RefundRequest,
+                TargetId = orderProductAffiliateUid,
+                IsRead = false,
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = "Refund Requested",
+                Body = "requested a refund for an order."
+            };
+            _context.NotificationHistories.Add(notification);
+            await _context.SaveChangesAsync(cancellationToken: default);
+
+            await SendRefundPushNotificationAsync(buyerProfileId, sellerProfileId, orderProductAffiliateUid, NotificationActionTypeEnum.RefundRequest, "Refund Requested", "A buyer has requested a refund.");
+        }
+
+        public async Task SaveRefundApprovedNotificationAsync(int sellerProfileId, int buyerProfileId, string orderProductAffiliateUid)
+        {
+            var notification = new NotificationHistory
+            {
+                ReceiverUserId = buyerProfileId,
+                ActorUserId = sellerProfileId,
+                ActionType = NotificationActionTypeEnum.RefundApproved,
+                TargetId = orderProductAffiliateUid,
+                IsRead = false,
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = "Refund Approved",
+                Body = "has approved your refund request."
+            };
+            _context.NotificationHistories.Add(notification);
+            await _context.SaveChangesAsync(cancellationToken: default);
+
+            await SendRefundPushNotificationAsync(sellerProfileId, buyerProfileId, orderProductAffiliateUid, NotificationActionTypeEnum.RefundApproved, "Refund Approved", "Your refund request has been approved.");
+        }
+
+        public async Task SaveRefundRejectedNotificationAsync(int sellerProfileId, int buyerProfileId, string orderProductAffiliateUid)
+        {
+            var notification = new NotificationHistory
+            {
+                ReceiverUserId = buyerProfileId,
+                ActorUserId = sellerProfileId,
+                ActionType = NotificationActionTypeEnum.RefundRejected,
+                TargetId = orderProductAffiliateUid,
+                IsRead = false,
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = "Refund Rejected",
+                Body = "has rejected your refund request."
+            };
+            _context.NotificationHistories.Add(notification);
+            await _context.SaveChangesAsync(cancellationToken: default);
+
+            await SendRefundPushNotificationAsync(sellerProfileId, buyerProfileId, orderProductAffiliateUid, NotificationActionTypeEnum.RefundRejected, "Refund Rejected", "Your refund request has been rejected.");
+        }
+
+        public async Task SaveRefundDisputedNotificationAsync(int buyerProfileId, int? sellerProfileId, string orderProductAffiliateUid)
+        {
+            var notification = new NotificationHistory
+            {
+                ReceiverUserId = buyerProfileId,
+                ActorUserId = 0,
+                ActionType = NotificationActionTypeEnum.RefundDisputed,
+                TargetId = orderProductAffiliateUid,
+                IsRead = false,
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = "Refund Disputed",
+                Body = "Your refund has been escalated to an admin."
+            };
+            _context.NotificationHistories.Add(notification);
+            await _context.SaveChangesAsync(cancellationToken: default);
+
+            await SendRefundPushNotificationAsync(0, buyerProfileId, orderProductAffiliateUid, NotificationActionTypeEnum.RefundDisputed, "Refund Disputed", "Your refund has been escalated to an admin.");
+
+            if (sellerProfileId.HasValue)
+            {
+                var sellerNotification = new NotificationHistory
+                {
+                    ReceiverUserId = sellerProfileId.Value,
+                    ActorUserId = 0,
+                    ActionType = NotificationActionTypeEnum.RefundDisputed,
+                    TargetId = orderProductAffiliateUid,
+                    IsRead = false,
+                    TargetType = EntityTypeEnum.PRODUCT,
+                    Title = "Refund Disputed",
+                    Body = "A buyer has escalated a refund to an admin."
+                };
+                _context.NotificationHistories.Add(sellerNotification);
+                await _context.SaveChangesAsync(cancellationToken: default);
+
+                await SendRefundPushNotificationAsync(0, sellerProfileId.Value, orderProductAffiliateUid, NotificationActionTypeEnum.RefundDisputed, "Refund Disputed", "A buyer has escalated a refund to an admin.");
+            }
+        }
+
+        public async Task SaveRefundResolvedNotificationAsync(int adminProfileId, int buyerProfileId, int? sellerProfileId, string orderProductAffiliateUid)
+        {
+            var buyerNotification = new NotificationHistory
+            {
+                ReceiverUserId = buyerProfileId,
+                ActorUserId = adminProfileId,
+                ActionType = NotificationActionTypeEnum.RefundResolved,
+                TargetId = orderProductAffiliateUid,
+                IsRead = false,
+                TargetType = EntityTypeEnum.PRODUCT,
+                Title = "Refund Resolved",
+                Body = "An admin has resolved the refund dispute."
+            };
+            _context.NotificationHistories.Add(buyerNotification);
+            await _context.SaveChangesAsync(cancellationToken: default);
+
+            await SendRefundPushNotificationAsync(adminProfileId, buyerProfileId, orderProductAffiliateUid, NotificationActionTypeEnum.RefundResolved, "Refund Resolved", "An admin has resolved the refund dispute.");
+
+            if (sellerProfileId.HasValue)
+            {
+                var sellerNotification = new NotificationHistory
+                {
+                    ReceiverUserId = sellerProfileId.Value,
+                    ActorUserId = adminProfileId,
+                    ActionType = NotificationActionTypeEnum.RefundResolved,
+                    TargetId = orderProductAffiliateUid,
+                    IsRead = false,
+                    TargetType = EntityTypeEnum.PRODUCT,
+                    Title = "Refund Resolved",
+                    Body = "An admin has resolved the refund dispute."
+                };
+                _context.NotificationHistories.Add(sellerNotification);
+                await _context.SaveChangesAsync(cancellationToken: default);
+
+                await SendRefundPushNotificationAsync(adminProfileId, sellerProfileId.Value, orderProductAffiliateUid, NotificationActionTypeEnum.RefundResolved, "Refund Resolved", "An admin has resolved the refund dispute.");
+            }
+        }
+
+        private async Task SendRefundPushNotificationAsync(int actorProfileId, int receiverProfileId, string orderProductAffiliateUid, NotificationActionTypeEnum actionType, string title, string body)
+        {
+            try
+            {
+                var receiver = await _context.Profiles
+                    .Where(p => p.Id == receiverProfileId)
+                    .Select(p => new { p.UserId })
+                    .FirstOrDefaultAsync();
+
+                if (receiver == null || string.IsNullOrEmpty(receiver.UserId))
+                    return;
+
+                var userTokens = await GetUserPushTokensWithSettingsAsync(receiver.UserId, actionType);
+                if (!userTokens.Any())
+                    return;
+
+                var batchCount = await GetUnreadNotificationCountAsync(receiver.UserId);
+
+                var notification = await _context.NotificationHistories
+                    .Where(n => n.ReceiverUserId == receiverProfileId &&
+                               n.ActorUserId == actorProfileId &&
+                               n.TargetId == orderProductAffiliateUid &&
+                               n.ActionType == actionType)
+                    .OrderByDescending(n => n.CreatedAt)
+                    .Select(n => new { n.Uid, n.TargetType })
+                    .FirstOrDefaultAsync();
+
+                var data = new
+                {
+                    type = actionType.ToString(),
+                    orderProductAffiliateUid,
+                    actorProfileId,
+                    batchCount,
+                    notificationId = notification?.Uid,
+                    targetType = notification?.TargetType.ToString()
+                };
+
+                var expoTokens = userTokens.Select(ut => ut.ExpoToken).Distinct().ToList();
+                await _expoNotificationService.SendNotificationsAsync(expoTokens, title, body, data);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending {ActionType} push notification to profile {ReceiverProfileId}", actionType, receiverProfileId);
             }
         }
 

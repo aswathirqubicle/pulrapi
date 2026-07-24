@@ -1,13 +1,14 @@
 using MediatR;
+using Microsoft.EntityFrameworkCore;
 using Microsoft.Extensions.Logging;
 using System;
+using System.Collections.Generic;
 using System.ComponentModel.DataAnnotations;
+using System.Linq;
 using System.Threading;
 using System.Threading.Tasks;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
-
-using System.Collections.Generic;
 
 namespace Core.Application.Mediatr.Orders.Commands.UpdateOrderItemStatus;
 
@@ -21,6 +22,8 @@ public class UpdateOrderItemStatusCommand : IRequest<bool>
     
     [Required]
     public string ShippingProvider { get; set; }
+
+    public List<string> ShippingProofMediaFileUids { get; set; } = new();
 }
 
 public class UpdateOrderItemStatusCommandHandler : IRequestHandler<UpdateOrderItemStatusCommand, bool>
@@ -28,15 +31,18 @@ public class UpdateOrderItemStatusCommandHandler : IRequestHandler<UpdateOrderIt
     private readonly IOrderService _orderService;
     private readonly ILogger<UpdateOrderItemStatusCommandHandler> _logger;
     private readonly ICurrentUserService _currentUserService;
+    private readonly IApplicationDbContext _dbContext;
 
     public UpdateOrderItemStatusCommandHandler(
         IOrderService orderService,
         ILogger<UpdateOrderItemStatusCommandHandler> logger,
-        ICurrentUserService currentUserService)
+        ICurrentUserService currentUserService,
+        IApplicationDbContext dbContext)
     {
         _orderService = orderService;
         _logger = logger;
         _currentUserService = currentUserService;
+        _dbContext = dbContext;
     }
 
     public async Task<bool> Handle(UpdateOrderItemStatusCommand request, CancellationToken cancellationToken)
@@ -49,11 +55,29 @@ public class UpdateOrderItemStatusCommandHandler : IRequestHandler<UpdateOrderIt
                 throw new NotAuthenticatedException("User must be logged in.");
             }
 
+            List<int> shippingProofMediaFileIds = new List<int>();
+            if (request.ShippingProofMediaFileUids != null && request.ShippingProofMediaFileUids.Any())
+            {
+                var mediaFiles = await _dbContext.MediaFiles
+                    .Where(mf => request.ShippingProofMediaFileUids.Contains(mf.Uid) && mf.IsActive)
+                    .ToListAsync(cancellationToken);
+
+                var foundUids = mediaFiles.Select(mf => mf.Uid).ToHashSet();
+                var missingUids = request.ShippingProofMediaFileUids.Where(uid => !foundUids.Contains(uid)).ToList();
+                if (missingUids.Any())
+                {
+                    throw new NotFoundException($"Shipping proof media files not found for UIDs: {string.Join(", ", missingUids)}");
+                }
+
+                shippingProofMediaFileIds = mediaFiles.Select(mf => mf.Id).ToList();
+            }
+
             var result = await _orderService.UpdateOrderItemsStatusAsync(
                 user.Id, 
                 request.ItemUids, 
                 request.TrackingNumber, 
-                request.ShippingProvider, 
+                request.ShippingProvider,
+                shippingProofMediaFileIds,
                 cancellationToken);
 
             _logger.LogInformation("Order items {ItemUids} marked as shipped by user {UserId}", 

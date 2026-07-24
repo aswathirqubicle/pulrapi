@@ -12,6 +12,7 @@ using Core.Application.Extensions;
 using Core.Application.Helpers;
 using Core.Application.Interfaces;
 using Core.Application.Models;
+using Core.Application.Constants;
 using Core.Infrastructure.Services;
 using Core.Domain.Entities;
 using System.Linq;
@@ -30,6 +31,7 @@ namespace Core.Infrastructure.Services
         private readonly AmazonSesEmailConfig _emailConfig;
         private readonly IApplicationDbContext _dbContext;
         private readonly IEmailLogoService _emailLogoService;
+        private readonly ISettingsCacheService _settingsCacheService;
         private static readonly HttpClient _httpClient = new HttpClient();
         private static readonly Dictionary<string, string> _phoneCodeCache = new Dictionary<string, string>(StringComparer.OrdinalIgnoreCase);
 
@@ -37,11 +39,14 @@ namespace Core.Infrastructure.Services
             IConfiguration config, 
             ILogger<EmailService> logger, 
             IApplicationDbContext dbContext,
-            IEmailLogoService emailLogoService)
+            IEmailLogoService emailLogoService,
+            ISettingsCacheService settingsCacheService)
         {
             _config = config ?? throw new ArgumentNullException(nameof(config));
             _logger = logger ?? throw new ArgumentNullException(nameof(logger));
             _dbContext = dbContext ?? throw new ArgumentNullException(nameof(dbContext));
+            _emailLogoService = emailLogoService ?? throw new ArgumentNullException(nameof(emailLogoService));
+            _settingsCacheService = settingsCacheService;
             _emailLogoService = emailLogoService ?? throw new ArgumentNullException(nameof(emailLogoService));
             
             if (_emailConfig == null)
@@ -199,8 +204,8 @@ namespace Core.Infrastructure.Services
                 // Calculate subtotal (products + shipping) without VAT
                 var subtotal = productCost + shippingFee;
 
-                // Calculate VAT (5% of subtotal)
-                var vatRate = 0.05m;
+                var platformSettings = await _settingsCacheService.GetPlatformSettingsAsync();
+                var vatRate = platformSettings?.VatRate ?? 0.05m;
                 var estimatedVAT = subtotal * vatRate;
 
                 // Calculate total (subtotal + VAT)
@@ -215,7 +220,7 @@ namespace Core.Infrastructure.Services
                 await SendBuyerOrderConfirmationEmailAsync(order, estimatedVAT, shippingFee, deliveryAddress, orderDate, totalAmount);
 
                 // Send emails to all sellers
-                await SendSellerOrderNotificationEmailsAsync(order, estimatedVAT, shippingFee, deliveryAddress, orderDate);
+                await SendSellerOrderNotificationEmailsAsync(order, estimatedVAT, shippingFee, deliveryAddress, orderDate, vatRate);
             }
             catch (Exception ex)
             {
@@ -335,7 +340,7 @@ namespace Core.Infrastructure.Services
             }
         }
 
-        private async Task SendSellerOrderNotificationEmailsAsync(Order order, decimal estimatedVAT, decimal totalShippingFee, string deliveryAddress, string orderDate)
+        private async Task SendSellerOrderNotificationEmailsAsync(Order order, decimal estimatedVAT, decimal totalShippingFee, string deliveryAddress, string orderDate, decimal vatRate)
         {
             try
             {
@@ -410,7 +415,7 @@ namespace Core.Infrastructure.Services
                         OrderNumber = order.Uid,
                         OrderDate = orderDate,
                         TotalAmount = sellerTotalAmount,
-                        EstimatedVAT = sellerTotalAmount * 0.05m,
+                        EstimatedVAT = sellerTotalAmount * vatRate,
                         ShippingFee = sellerShippingFee,
                         Currency = order.Currency?.Code ?? "AED",
                         PaymentMethod = order.PaymentMethod?.Name ?? "Card",
@@ -650,7 +655,8 @@ namespace Core.Infrastructure.Services
                     <p>Dear {buyerName},</p>
                     <p>Your refund for order #{order.Uid} has been processed successfully.</p>
                     <p><strong>Refund Amount:</strong> {refundAmount:C}</p>
-                    <p>The amount has been credited to your Pulr wallet.</p>
+                    <p>The refund has been initiated to your original payment method (card/bank used for this purchase). Please allow 5-10 business days for the funds to appear in your account.</p>
+                    <p><em>Note: The card processing fee is non-refundable as per our policy. Only the net order amount is refunded.</em></p>
                     <p>If you have any questions, please contact our support team.</p>
                     <p>Best regards,<br/>Pulr Team</p>
                 ";
@@ -724,10 +730,222 @@ namespace Core.Infrastructure.Services
             }
         }
 
+        public async Task SendRefundRequestToSellerAsync(Order order, OrderProductAffiliate orderItem, decimal refundAmount)
+        {
+            try
+            {
+                if (order == null || orderItem == null)
+                {
+                    _logger.LogWarning("Order or order item is null, cannot send refund request email to seller");
+                    return;
+                }
+
+                var sellerEmail = orderItem.Product?.User?.Email;
+
+                if (string.IsNullOrWhiteSpace(sellerEmail))
+                {
+                    _logger.LogWarning("No seller email found for order {OrderId}", order.Uid);
+                    return;
+                }
+
+                var sellerName = orderItem.Product?.User?.UserName ?? "Seller";
+                var productName = orderItem.Product?.Name ?? orderItem.ProductNameSnapshot ?? "Product";
+
+                var emailContent = $@"
+                    <h1>New Refund Request</h1>
+                    <p>Dear {sellerName},</p>
+                    <p>A buyer has requested a refund for an order. Please review and respond within the allowed timeframe.</p>
+                    <p><strong>Order Number:</strong> #{order.Uid}</p>
+                    <p><strong>Product:</strong> {productName}</p>
+                    <p><strong>Refund Amount:</strong> {refundAmount:C}</p>
+                    <p>Please respond to this request promptly. If you do not respond within the required period, the refund may be automatically approved.</p>
+                    <p>Best regards,<br/>Pulr Team</p>
+                ";
+
+                var emailParams = new EmailParamsDto
+                {
+                    To = new List<string> { sellerEmail },
+                    From = _config["PulrEmails:Support"],
+                    Subject = $"New Refund Request - Order #{order.Uid}",
+                    Content = emailContent
+                };
+
+                await emailParams.AddLogoAsync(_emailLogoService);
+                await SendMail(emailParams);
+
+                _logger.LogInformation("Refund request email sent to seller for order {OrderId} to {Email}", order.Uid, sellerEmail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending refund request email to seller for order {OrderId}", order?.Uid);
+            }
+        }
+
+        public async Task SendRefundRejectedToBuyerAsync(Order order, OrderProductAffiliate orderItem, string sellerReason)
+        {
+            try
+            {
+                if (order == null || orderItem == null)
+                {
+                    _logger.LogWarning("Order or order item is null, cannot send refund rejected email to buyer");
+                    return;
+                }
+
+                var buyerName = order.Profile?.User?.FirstName ?? order.Profile?.User?.UserName ?? "Valued Customer";
+                var buyerEmail = order.Profile?.User?.Email;
+
+                if (string.IsNullOrWhiteSpace(buyerEmail))
+                {
+                    _logger.LogWarning("No buyer email found for order {OrderId}", order.Uid);
+                    return;
+                }
+
+                var sellerName = orderItem.Product?.User?.UserName ?? "Seller";
+                var productName = orderItem.Product?.Name ?? orderItem.ProductNameSnapshot ?? "Product";
+
+                var emailContent = $@"
+                    <h1>Refund Request Rejected</h1>
+                    <p>Dear {buyerName},</p>
+                    <p>Your refund request for order #{order.Uid} has been reviewed by the seller.</p>
+                    <p><strong>Product:</strong> {productName}</p>
+                    <p><strong>Seller:</strong> {sellerName}</p>
+                    <p><strong>Seller's Reason:</strong> {sellerReason}</p>
+                    <p>The refund request has been rejected. An admin will review this dispute shortly to ensure a fair resolution.</p>
+                    <p>Best regards,<br/>Pulr Team</p>
+                ";
+
+                var emailParams = new EmailParamsDto
+                {
+                    To = new List<string> { buyerEmail },
+                    From = _config["PulrEmails:Support"],
+                    Subject = "Refund Request Rejected - Under Admin Review",
+                    Content = emailContent
+                };
+
+                await emailParams.AddLogoAsync(_emailLogoService);
+                await SendMail(emailParams);
+
+                _logger.LogInformation("Refund rejected email sent to buyer for order {OrderId} to {Email}", order.Uid, buyerEmail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending refund rejected email to buyer for order {OrderId}", order?.Uid);
+            }
+        }
+
+        public async Task SendRefundDisputedToAdminAsync(RefundDispute refundDispute)
+        {
+            try
+            {
+                if (refundDispute == null)
+                {
+                    _logger.LogWarning("Refund dispute is null, cannot send dispute email to admin");
+                    return;
+                }
+
+                var adminEmail = _config["PulrEmails:Support"];
+                var orderItem = refundDispute.OrderProductAffiliate;
+                var order = orderItem?.Order;
+                var productName = orderItem?.Product?.Name ?? orderItem?.ProductNameSnapshot ?? "Product";
+
+                var emailContent = $@"
+                    <h1>New Refund Dispute</h1>
+                    <p>A new refund dispute has been submitted and requires admin review.</p>
+                    <p><strong>Dispute UID:</strong> {refundDispute.Uid}</p>
+                    <p><strong>Order Number:</strong> #{order?.Uid}</p>
+                    <p><strong>Product:</strong> {productName}</p>
+                    <p>Please review the dispute and take appropriate action.</p>
+                    <p>Best regards,<br/>Pulr Team</p>
+                ";
+
+                var emailParams = new EmailParamsDto
+                {
+                    To = new List<string> { adminEmail },
+                    From = adminEmail,
+                    Subject = "New Refund Dispute Requires Review",
+                    Content = emailContent
+                };
+
+                await emailParams.AddLogoAsync(_emailLogoService);
+                await SendMail(emailParams);
+
+                _logger.LogInformation("Refund dispute email sent to admin for dispute {DisputeUid}", refundDispute.Uid);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending refund dispute email to admin for dispute {DisputeUid}", refundDispute?.Uid);
+            }
+        }
+
+        public async Task SendRefundResolvedToBuyerAsync(Order order, OrderProductAffiliate orderItem, bool approved, string adminNotes)
+        {
+            try
+            {
+                if (order == null || orderItem == null)
+                {
+                    _logger.LogWarning("Order or order item is null, cannot send refund resolved email to buyer");
+                    return;
+                }
+
+                var buyerName = order.Profile?.User?.FirstName ?? order.Profile?.User?.UserName ?? "Valued Customer";
+                var buyerEmail = order.Profile?.User?.Email;
+
+                if (string.IsNullOrWhiteSpace(buyerEmail))
+                {
+                    _logger.LogWarning("No buyer email found for order {OrderId}", order.Uid);
+                    return;
+                }
+
+                var productName = orderItem.Product?.Name ?? orderItem.ProductNameSnapshot ?? "Product";
+
+                string emailContent;
+                if (approved)
+                {
+                    emailContent = $@"
+                        <h1>Refund Approved</h1>
+                        <p>Dear {buyerName},</p>
+                        <p>Good news! Your refund dispute for order #{order.Uid} has been approved.</p>
+                        <p><strong>Product:</strong> {productName}</p>
+                        <p>The refund is being processed and will appear in your original payment method within 5-10 business days.</p>
+                        <p>Best regards,<br/>Pulr Team</p>
+                    ";
+                }
+                else
+                {
+                    emailContent = $@"
+                        <h1>Refund Dispute Resolved</h1>
+                        <p>Dear {buyerName},</p>
+                        <p>We regret to inform you that your refund dispute for order #{order.Uid} has been denied.</p>
+                        <p><strong>Product:</strong> {productName}</p>
+                        <p><strong>Admin Notes:</strong> {adminNotes}</p>
+                        <p>Thank you for your understanding.</p>
+                        <p>Best regards,<br/>Pulr Team</p>
+                    ";
+                }
+
+                var emailParams = new EmailParamsDto
+                {
+                    To = new List<string> { buyerEmail },
+                    From = _config["PulrEmails:Support"],
+                    Subject = "Refund Dispute Resolved",
+                    Content = emailContent
+                };
+
+                await emailParams.AddLogoAsync(_emailLogoService);
+                await SendMail(emailParams);
+
+                _logger.LogInformation("Refund resolved email sent to buyer for order {OrderId} to {Email}", order.Uid, buyerEmail);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error sending refund resolved email to buyer for order {OrderId}", order?.Uid);
+            }
+        }
+
         private async Task SendSimpleEmail(EmailParamsDto emailParams)
         {
             using var sender = new AmazonSimpleEmailServiceClient(_emailConfig,
-                                                                  RegionEndpoint.MESouth1);
+                                                                  AwsRegionHelper.GetRegionEndpoint(_config[AwsLocationNames.AwsRegion]));
             string from = String.IsNullOrWhiteSpace(emailParams.From) ? _config["PulrEmails:Support"] : emailParams.From;
             
             // Filter and validate email addresses
@@ -799,7 +1017,8 @@ namespace Core.Infrastructure.Services
         {
             try
             {
-                using (var client = new AmazonSimpleEmailServiceClient(_emailConfig, RegionEndpoint.MESouth1))
+                using (var client = new AmazonSimpleEmailServiceClient(_emailConfig, 
+                                                       AwsRegionHelper.GetRegionEndpoint(_config[AwsLocationNames.AwsRegion])))
                 {
                     // Validate email addresses before sending
                     var validToAddresses = emailParams.To?.Where(IsValidEmailAddress).ToList() ?? new List<string>();

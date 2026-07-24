@@ -266,8 +266,8 @@ namespace Core.Infrastructure.Services
                         LikedByMe = cUser != null && c.PostLikes.Any(pl => pl.LikedById == cUser.Profile.Id),
                         TaggedProductUids = c.PostProductTags.Where(ppt => ppt.Product != null && ppt.Product.IsActive).Select(ppt => ppt.Product.Uid),
                         CreatedAt = c.CreatedAt,
-                        ImageWidth = c.ImageWidth,
-                        ImageHeight = c.ImageHeight,
+                        ImageWidth = c.ImageWidth ?? 500,
+                        ImageHeight = c.ImageHeight ?? 500,
                         VideoWidth = c.VideoWidth,
                         VideoHeight = c.VideoHeight,
                         //PostedByStore = c.Store != null,
@@ -423,17 +423,18 @@ namespace Core.Infrastructure.Services
                 {
                     _dbContext.PostLikes.Remove(existingPostLike);
 
-                    // Delete the like notification history
-                    var notification = await _dbContext.NotificationHistories
-                        .FirstOrDefaultAsync(n =>
+                    // Delete all like notifications for this post from this user
+                    var likeNotifications = await _dbContext.NotificationHistories
+                        .Where(n =>
                             n.TargetId == postUid &&
                             n.TargetType == EntityTypeEnum.POST &&
                             n.ActionType == NotificationActionTypeEnum.Like &&
-                            n.ActorUserId == cUser.Profile.Id);
+                            n.ActorUserId == cUser.Profile.Id)
+                        .ToListAsync();
 
-                    if (notification != null)
+                    if (likeNotifications.Any())
                     {
-                        _dbContext.NotificationHistories.Remove(notification);
+                        _dbContext.NotificationHistories.RemoveRange(likeNotifications);
                     }
                 }
 
@@ -609,8 +610,8 @@ namespace Core.Infrastructure.Services
                         //        ImageUrl = pms.Post.Store.ImageUrl
                         //    },
                         CreatedAt = pms.CreatedAt,
-                        ImageWidth = pms.Post.ImageWidth,
-                        ImageHeight = pms.Post.ImageHeight,
+                        ImageWidth = pms.Post.ImageWidth ?? 500,
+                        ImageHeight = pms.Post.ImageHeight ?? 500,
                         VideoWidth = pms.Post.VideoWidth,
                         VideoHeight = pms.Post.VideoHeight,
                         PostType = PostTypeEnum.MyStyle,

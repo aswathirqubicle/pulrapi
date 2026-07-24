@@ -1,4 +1,5 @@
 using System;
+using Core.Application.Models.Orders;
 
 namespace Core.Application.Models.Wallet
 {
@@ -15,5 +16,7 @@ namespace Core.Application.Models.Wallet
         public DateTime InitiationDate { get; set; }
         public string OrderNumber { get; set; }
         public string SellerName { get; set; }
+        public string? CollabId { get; set; }
+        public PaymentBreakdownResponse? PaymentBreakdown { get; set; }
     }
 }

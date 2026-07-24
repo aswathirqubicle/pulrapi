@@ -10,6 +10,7 @@ using System.Text.RegularExpressions;
 using System.Threading;
 using System.Threading.Tasks;
 using Core.Application.Exceptions;
+using Core.Application.Helpers;
 using Core.Application.Interfaces;
 using Core.Application.Mediatr.Orders.Commands.Create;
 using Core.Application.Models.Orders;
@@ -248,11 +249,11 @@ public class CreateOrderCommandHandler : IRequestHandler<CreateOrderCommand, str
 
             await _dbContext.SaveChangesAsync(cancellationToken);
 
-            // Set orderId in "P{sequentialId}" format (e.g., "P001") and save to database Uid
-            var formattedOrderId = $"P{order.Id:D3}";
+            // Non-guessable, non-sequential public order id to prevent IDOR enumeration.
+            var formattedOrderId = OrderUidGenerator.Generate();
             order.Uid = formattedOrderId;
 
-            // Update individual product order IDs (P001-01, P001-02, etc.)
+            // Update individual product (sub-order) IDs as "{orderUid}-01", "{orderUid}-02", etc.
             int productIndex = 1;
             foreach (var opa in order.OrderProductAffiliates)
             {

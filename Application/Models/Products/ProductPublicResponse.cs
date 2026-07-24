@@ -26,5 +26,6 @@ namespace Core.Application.Models.Products
         public Dictionary<string, List<ProductVariantCombinationResponse>> ProductVariantCombinations { get; set; } = [];
         public ProfileBaseResponse Profile { get; set; }
         public bool IsDeletable { get; set; } = true;
+        public string? CollabId { get; set; }
     }
 }

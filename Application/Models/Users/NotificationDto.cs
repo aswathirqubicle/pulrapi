@@ -23,5 +23,8 @@ namespace Core.Application.Models.Users
         public DateTime CreatedAt { get; set; }
         public string Value { get; set; }
         public string RequesterProfileType { get; set; } // "public" or "private" - for follow request notifications
+        public string Title { get; set; }
+        public string Body { get; set; }
+        public int? FollowerCount { get; set; }
     }
 } 

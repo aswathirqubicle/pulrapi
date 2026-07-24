@@ -179,7 +179,7 @@ namespace Core.Application.Mediatr.Profiles.Queries
                     UnseenStoriesCount = p.User.Stories != null && cUser != null
                         ? p.User.Stories.Count(s => s.IsActive && s.StoryExpiresIn > DateTime.UtcNow && !s.StorySeens.Any(seen => seen.SeenById == cUser.Profile.Id))
                         : (p.User.Stories != null ? p.User.Stories.Count(s => s.IsActive && s.StoryExpiresIn > DateTime.UtcNow) : 0),
-                    IsProfilePublic = true, // Default value
+                    IsProfilePublic = p.ProfileSettings == null || p.ProfileSettings.IsProfilePublic,
                     IsProfileBio = !string.IsNullOrEmpty(p.About),
                     IsInfluencer = false, // This should be calculated based on user roles if needed
                     PostedTimeAgo = p.CreatedAt, // Default to CreatedAt for now

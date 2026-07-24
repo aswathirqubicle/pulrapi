@@ -119,14 +119,50 @@ public class ExtendDeliveryCommandHandler : IRequestHandler<ExtendDeliveryComman
                     continue;
                 }
 
-                // Verify item is Shipped
-                if (orderItem.OrderItemStatus != OrderStatusEnum.Shipped)
+                // Verify the item was actually shipped (ShippedAt exists)
+                if (!orderItem.ShippedAt.HasValue)
+                {
+                    results.Add(new ExtendDeliveryItemResult
+                    {
+                        ItemUid = itemUid,
+                        Success = false,
+                        Message = "Order item cannot be extended - it was never shipped."
+                    });
+                    continue;
+                }
+
+                // Verify the item is in a valid status for extension (Shipped or OrderFailed after countdown expiry)
+                if (orderItem.OrderItemStatus != OrderStatusEnum.Shipped && orderItem.OrderItemStatus != OrderStatusEnum.OrderFailed)
                 {
                     results.Add(new ExtendDeliveryItemResult
                     {
                         ItemUid = itemUid,
                         Success = false,
                         Message = $"Order item cannot be extended. Current status: {orderItem.OrderItemStatus}"
+                    });
+                    continue;
+                }
+
+                // Block if already refunded
+                if (orderItem.OrderItemStatus == OrderStatusEnum.Refunded)
+                {
+                    results.Add(new ExtendDeliveryItemResult
+                    {
+                        ItemUid = itemUid,
+                        Success = false,
+                        Message = "Order item was refunded and cannot be extended."
+                    });
+                    continue;
+                }
+
+                // Block if already confirmed
+                if (orderItem.OrderItemStatus == OrderStatusEnum.Delivered || orderItem.OrderItemStatus == OrderStatusEnum.Completed)
+                {
+                    results.Add(new ExtendDeliveryItemResult
+                    {
+                        ItemUid = itemUid,
+                        Success = false,
+                        Message = "Order item is already confirmed as delivered."
                     });
                     continue;
                 }
@@ -139,18 +175,6 @@ public class ExtendDeliveryCommandHandler : IRequestHandler<ExtendDeliveryComman
                         ItemUid = itemUid,
                         Success = false,
                         Message = "Delivery has already been extended once. No further extensions allowed."
-                    });
-                    continue;
-                }
-
-                // Check if countdown has expired (can only extend after countdown expires)
-                if (orderItem.CountdownExpiryDate == null || orderItem.CountdownExpiryDate >= DateTime.UtcNow)
-                {
-                    results.Add(new ExtendDeliveryItemResult
-                    {
-                        ItemUid = itemUid,
-                        Success = false,
-                        Message = "Delivery countdown has not expired yet. Extension is only available after countdown expires."
                     });
                     continue;
                 }

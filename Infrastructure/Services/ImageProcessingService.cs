@@ -23,6 +23,85 @@ namespace Core.Infrastructure.Services
         /// </summary>
         public Task<bool> IsFfmpegAvailableAsync() => Task.FromResult(true);
 
+        public Task<Stream> ProcessImageFromStreamAsync(Stream inputStream, int width, int height, string filterType)
+        {
+            try
+            {
+                _logger.LogInformation("Starting SkiaSharp image processing from stream");
+
+                using var originalBitmap = SKBitmap.Decode(inputStream);
+
+                if (originalBitmap == null)
+                {
+                    _logger.LogError("Failed to decode image from stream");
+                    return Task.FromResult<Stream>(null);
+                }
+
+                // Scale to target size, covering the full area (Instagram-style center crop)
+                var srcRatio = (float)originalBitmap.Width / originalBitmap.Height;
+                var dstRatio = (float)width / height;
+
+                int srcX, srcY, srcW, srcH;
+                if (srcRatio > dstRatio)
+                {
+                    // Wider than target: crop sides
+                    srcH = originalBitmap.Height;
+                    srcW = (int)(srcH * dstRatio);
+                    srcX = (originalBitmap.Width - srcW) / 2;
+                    srcY = 0;
+                }
+                else
+                {
+                    // Taller than target: crop top/bottom
+                    srcW = originalBitmap.Width;
+                    srcH = (int)(srcW / dstRatio);
+                    srcX = 0;
+                    srcY = (originalBitmap.Height - srcH) / 2;
+                }
+
+                var srcRect = new SKRectI(srcX, srcY, srcX + srcW, srcY + srcH);
+                var dstRect = new SKRect(0, 0, width, height);
+
+                var imageInfo = new SKImageInfo(width, height, SKColorType.Rgba8888, SKAlphaType.Premul);
+                using var surface = SKSurface.Create(imageInfo);
+                var canvas = surface.Canvas;
+                canvas.Clear(SKColors.Black);
+
+                // Draw scaled + cropped image
+                using var scaledPaint = new SKPaint { IsAntialias = true, FilterQuality = SKFilterQuality.High };
+                canvas.DrawBitmap(originalBitmap, srcRect, dstRect, scaledPaint);
+
+                // Apply filter overlay if specified
+                var filterDef = MediaFilterHelper.GetSkiaFilter(filterType);
+                if (filterDef != null)
+                {
+                    ApplyFilter(canvas, width, height, filterDef, filterType);
+                }
+
+                // Encode to memory stream
+                using var snapshot = surface.Snapshot();
+                using var encoded = snapshot.Encode(SKEncodedImageFormat.Jpeg, 90);
+
+                if (encoded == null)
+                {
+                    _logger.LogError("Failed to encode output image from stream");
+                    return Task.FromResult<Stream>(null);
+                }
+
+                var outputStream = new MemoryStream();
+                encoded.SaveTo(outputStream);
+                outputStream.Position = 0;
+
+                _logger.LogInformation("SkiaSharp image processing from stream completed");
+                return Task.FromResult<Stream>(outputStream);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "Error during SkiaSharp image processing from stream");
+                return Task.FromResult<Stream>(null);
+            }
+        }
+
         public Task<string> ProcessImageAsync(string inputPath, string outputPath, int width, int height, string filterType)
         {
             try

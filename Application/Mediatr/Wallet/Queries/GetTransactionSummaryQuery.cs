@@ -4,6 +4,7 @@ using System.Threading;
 using System.Threading.Tasks;
 using Core.Application.Exceptions;
 using Core.Application.Interfaces;
+using Core.Application.Models.Orders;
 using Core.Application.Models.Wallet;
 using Core.Domain.Enums;
 using MediatR;
@@ -58,6 +59,10 @@ namespace Core.Application.Mediatr.Wallet.Queries
                             .ThenInclude(opa => opa.Product)
                                 .ThenInclude(p => p.User)
                     .Include(t => t.Order)
+                        .ThenInclude(o => o.OrderProductAffiliates)
+                            .ThenInclude(opa => opa.Product)
+                                .ThenInclude(p => p.ProductMediaFiles)
+                    .Include(t => t.Order)
                         .ThenInclude(o => o.Profile)
                             .ThenInclude(p => p.User)
                     .FirstOrDefaultAsync(t => t.Uid == request.Uid && t.ProfileId == profile.Id && t.IsActive, cancellationToken);
@@ -102,6 +107,25 @@ namespace Core.Application.Mediatr.Wallet.Queries
                         sellerName = transaction.SellerName;
                     }
                 }
+                else if (transaction.TransactionType == TransactionTypeEnum.ExchangeCharge ||
+                         transaction.TransactionType == TransactionTypeEnum.ExchangeCredit)
+                {
+                    // Exchange transactions can belong to either the buyer or the seller,
+                    // so resolve the role via the order's owning profile rather than the type.
+                    if (transaction.Order != null && transaction.ProfileId == transaction.Order.ProfileId)
+                    {
+                        var sellerUser = transaction.Order.OrderProductAffiliates?
+                            .Where(opa => opa.Product?.User != null)
+                            .Select(opa => opa.Product.User)
+                            .FirstOrDefault();
+
+                        sellerName = sellerUser?.UserName;
+                    }
+                    else
+                    {
+                        sellerName = transaction.Profile?.User?.UserName ?? transaction.SellerName;
+                    }
+                }
                 else
                 {
                     // For other transaction types, use stored SellerName
@@ -120,7 +144,14 @@ namespace Core.Application.Mediatr.Wallet.Queries
                     CardNumber = maskedCardNumber,
                     InitiationDate = transaction.CreatedAt,
                     OrderNumber = transaction.Order?.Uid,
-                    SellerName = sellerName
+                    SellerName = sellerName,
+                    CollabId = transaction.Order?.CollabId,
+                    PaymentBreakdown = transaction.Order != null
+                        ? PaymentBreakdownResponse.Build(
+                            transaction.Order.VatAmount,
+                            transaction.Order.OrderProductAffiliates,
+                            isBuyer: transaction.TransactionType == TransactionTypeEnum.Purchase)
+                        : null
                 };
             }
             catch (Exception ex)

@@ -35,7 +35,9 @@ public class StripeService : IStripeService
             throw new InvalidOperationException("Stripe:SecretKey is not configured in appsettings.json");
         }
         
-        _stripeClient = new StripeClient(secretKey);
+        var httpClient = new SystemNetHttpClient(
+            new System.Net.Http.HttpClient { Timeout = TimeSpan.FromSeconds(30) });
+        _stripeClient = new StripeClient(secretKey, httpClient: httpClient);
         _publishableKey = _configuration["Stripe:PublishableKey"] ?? string.Empty;
         _webhookSecret = _configuration["Stripe:WebhookSecret"] ?? string.Empty;
     }
@@ -62,7 +64,6 @@ public class StripeService : IStripeService
 
             if (!string.IsNullOrWhiteSpace(request.PaymentMethodId))
             {
-                // Charge a saved card immediately (off-session)
                 var paymentIntentOptions = new PaymentIntentCreateOptions
                 {
                     Amount = amountInSmallestUnit,
@@ -71,15 +72,14 @@ public class StripeService : IStripeService
                     PaymentMethod = request.PaymentMethodId,
                     Confirm = true,
                     OffSession = false,
-                    ReturnUrl = request.ReturnUrl ?? "https://app.pulr.co/payment-complete", // Placeholder or from request
+                    ReturnUrl = request.ReturnUrl ?? "https://app.pulr.co/payment-complete",
                     Metadata = metadata
                 };
 
-                paymentIntent = await paymentIntentService.CreateAsync(paymentIntentOptions);
+                paymentIntent = await CreatePaymentIntentWithRetryAsync(paymentIntentService, paymentIntentOptions);
             }
             else
             {
-                // Original flow: return client secrets for PaymentSheet / MobilePaymentElement
                 var customerSession = await CreateCustomerSessionAsync(customer.Id);
 
                 var paymentIntentOptions = new PaymentIntentCreateOptions
@@ -94,7 +94,7 @@ public class StripeService : IStripeService
                     Metadata = metadata
                 };
 
-                paymentIntent = await paymentIntentService.CreateAsync(paymentIntentOptions);
+                paymentIntent = await CreatePaymentIntentWithRetryAsync(paymentIntentService, paymentIntentOptions);
                 customerSessionClientSecret = customerSession.ClientSecret;
             }
 
@@ -128,21 +128,16 @@ public class StripeService : IStripeService
             User? user = null;
             string? userId = null;
 
-            if (_currentUserService.IsUserLoggedIn())
+            // Endpoint requires [Authorize] — user is always authenticated here.
+            // Always derive customer identity from the authenticated user; never trust caller-supplied CustomerId.
+            userId = _currentUserService.GetUserId();
+            user = await _currentUserService.GetUserAsync(skipDetails: true);
+
+            if (user != null)
             {
-                userId = _currentUserService.GetUserId();
-                user = await _currentUserService.GetUserAsync(skipDetails: true);
-                
-                if (user != null)
-                {
-                    request.Email = user.Email;
-                    request.Name = user.FirstName?.Trim();
-                    
-                    if (string.IsNullOrWhiteSpace(request.CustomerId) && !string.IsNullOrWhiteSpace(user.StripeCustomerId))
-                    {
-                        request.CustomerId = user.StripeCustomerId;
-                    }
-                }
+                request.Email = user.Email;
+                request.Name = user.FirstName?.Trim();
+                request.CustomerId = user.StripeCustomerId; // override any caller-supplied value
             }
 
             Customer customer;
@@ -440,12 +435,12 @@ public class StripeService : IStripeService
         catch (StripeException ex)
         {
             _logger.LogError(ex, "Stripe API error saving card: {Message}", ex.Message);
-            return new SaveCardResponse { Success = false, Error = ex.Message };
+            return new SaveCardResponse { Success = false, Error = "There was a problem saving your card. Please check your card details and try again." };
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "Error saving card: {Message}", ex.Message);
-            return new SaveCardResponse { Success = false, Error = ex.Message };
+            return new SaveCardResponse { Success = false, Error = "An unexpected error occurred while saving your card." };
         }
     }
 
@@ -567,32 +562,73 @@ public class StripeService : IStripeService
         {
             var stripeEvent = EventUtility.ConstructEvent(json, stripeSignature, _webhookSecret);
 
-            _logger.LogInformation("Processing Stripe webhook event: {EventType}", stripeEvent.Type);
+            _logger.LogInformation("Processing Stripe webhook event: {EventType} ({EventId})", stripeEvent.Type, stripeEvent.Id);
 
-            switch (stripeEvent.Type)
+            // Idempotency: Stripe delivers at-least-once and retries non-2xx/timeouts.
+            // If this event id was already processed, skip and return success so Stripe
+            // stops retrying. This is the cheap common-case guard for sequential retries.
+            var alreadyProcessed = await _dbContext.StripeWebhookEvents
+                .AnyAsync(e => e.EventId == stripeEvent.Id);
+            if (alreadyProcessed)
             {
-                case "payment_intent.succeeded":
-                    var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
-                    await HandlePaymentIntentSucceededAsync(paymentIntent);
-                    break;
-
-                case "payment_intent.payment_failed":
-                    var failedIntent = stripeEvent.Data.Object as PaymentIntent;
-                    _logger.LogWarning("Payment failed for PaymentIntent: {Id}. Error: {Message}", failedIntent.Id, failedIntent.LastPaymentError?.Message);
-                    // Update order status if needed
-                    break;
-
-                case "setup_intent.succeeded":
-                    var setupIntent = stripeEvent.Data.Object as SetupIntent;
-                    _logger.LogInformation("SetupIntent succeeded: {Id}", setupIntent.Id);
-                    break;
-                
-                default:
-                    _logger.LogInformation("Unhandled event type: {Type}", stripeEvent.Type);
-                    break;
+                _logger.LogInformation("Duplicate Stripe event {EventId} ({Type}) ignored.", stripeEvent.Id, stripeEvent.Type);
+                return true;
             }
 
-            return true;
+            // Process the event and record it in the idempotency ledger atomically, so a
+            // retry never re-applies a handler that already committed. The unique index on
+            // EventId closes the race where two duplicate deliveries run concurrently.
+            await using var tx = await _dbContext.Database.BeginTransactionAsync();
+            try
+            {
+                switch (stripeEvent.Type)
+                {
+                    case "payment_intent.succeeded":
+                        var paymentIntent = stripeEvent.Data.Object as PaymentIntent;
+                        await HandlePaymentIntentSucceededAsync(paymentIntent);
+                        break;
+
+                    case "payment_intent.payment_failed":
+                        var failedIntent = stripeEvent.Data.Object as PaymentIntent;
+                        _logger.LogWarning("Payment failed for PaymentIntent: {Id}. Error: {Message}", failedIntent.Id, failedIntent.LastPaymentError?.Message);
+                        break;
+
+                    case "charge.refunded":
+                        var charge = stripeEvent.Data.Object as Charge;
+                        if (charge != null)
+                        {
+                            await HandleChargeRefundedAsync(charge);
+                        }
+                        break;
+
+                    case "setup_intent.succeeded":
+                        var setupIntent = stripeEvent.Data.Object as SetupIntent;
+                        _logger.LogInformation("SetupIntent succeeded: {Id}", setupIntent.Id);
+                        break;
+
+                    default:
+                        _logger.LogInformation("Unhandled event type: {Type}", stripeEvent.Type);
+                        break;
+                }
+
+                _dbContext.StripeWebhookEvents.Add(new StripeWebhookEvent
+                {
+                    EventId = stripeEvent.Id,
+                    EventType = stripeEvent.Type,
+                    ProcessedAtUtc = DateTime.UtcNow
+                });
+                await _dbContext.SaveChangesAsync(System.Threading.CancellationToken.None);
+                await tx.CommitAsync();
+
+                return true;
+            }
+            catch (DbUpdateException dbEx) when (IsUniqueViolation(dbEx))
+            {
+                // A concurrent duplicate delivery already inserted the ledger row.
+                await tx.RollbackAsync();
+                _logger.LogInformation("Concurrent duplicate Stripe event {EventId} ({Type}) ignored.", stripeEvent.Id, stripeEvent.Type);
+                return true;
+            }
         }
         catch (StripeException ex)
         {
@@ -606,10 +642,16 @@ public class StripeService : IStripeService
         }
     }
 
+    /// <summary>
+    /// True when the <see cref="DbUpdateException"/> was caused by a PostgreSQL unique
+    /// constraint violation (SQLSTATE 23505) — i.e. the Stripe event id was already
+    /// recorded by a concurrent duplicate delivery.
+    /// </summary>
+    private static bool IsUniqueViolation(DbUpdateException ex)
+        => ex.InnerException is Npgsql.PostgresException pg && pg.SqlState == "23505";
+
     private async Task HandlePaymentIntentSucceededAsync(PaymentIntent paymentIntent)
     {
-        // Try to find the order associated with this payment intent
-        // 1. Try by OrderId stored in metadata
         string? orderId = null;
         paymentIntent.Metadata?.TryGetValue("OrderId", out orderId);
 
@@ -619,7 +661,6 @@ public class StripeService : IStripeService
             order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.Uid == orderId);
         }
 
-        // 2. Fallback: Try by PaymentIntentId stored in RawRequest
         if (order == null)
         {
             order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.RawRequest == paymentIntent.Id);
@@ -642,6 +683,150 @@ public class StripeService : IStripeService
         }
     }
 
+    private async Task HandleChargeRefundedAsync(Charge charge)
+    {
+        var paymentIntentId = charge.PaymentIntentId;
+
+        if (string.IsNullOrEmpty(paymentIntentId))
+        {
+            _logger.LogWarning("Charge.refunded event received without PaymentIntentId. ChargeId: {ChargeId}", charge.Id);
+            return;
+        }
+
+        _logger.LogInformation("Processing charge.refunded webhook for PaymentIntent: {PaymentIntentId}, Charge: {ChargeId}", paymentIntentId, charge.Id);
+
+        var order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.StripePaymentIntentId == paymentIntentId);
+        if (order == null)
+        {
+            order = await _dbContext.Orders.FirstOrDefaultAsync(o => o.RawRequest == paymentIntentId);
+        }
+
+        if (order == null)
+        {
+            _logger.LogWarning("Order not found for refunded PaymentIntent: {PaymentIntentId}", paymentIntentId);
+            return;
+        }
+
+        var orderItems = await _dbContext.OrderProductAffiliates
+            .Where(opa => opa.OrderId == order.Id && opa.IsActive)
+            .ToListAsync();
+
+        var refundedItems = orderItems.Where(opa => opa.EscrowStatus == Core.Domain.Enums.EscrowStatusEnum.RefundInProgress).ToList();
+
+        foreach (var item in refundedItems)
+        {
+            item.EscrowStatus = Core.Domain.Enums.EscrowStatusEnum.Refunded;
+            item.UpdatedAt = DateTime.UtcNow;
+            _logger.LogInformation("Order item {ItemUid} EscrowStatus updated to Refunded via charge.refunded webhook", item.Uid);
+        }
+
+        var allRefunded = orderItems.All(opa => opa.OrderItemStatus == Core.Domain.Enums.OrderStatusEnum.Refunded || opa.EscrowStatus == Core.Domain.Enums.EscrowStatusEnum.Refunded);
+        if (allRefunded)
+        {
+            order.OrderStatus = Core.Domain.Enums.OrderStatusEnum.Refunded;
+            order.UpdatedAt = DateTime.UtcNow;
+            _logger.LogInformation("Order {OrderUid} status updated to Refunded via charge.refunded webhook", order.Uid);
+        }
+
+        await _dbContext.SaveChangesAsync(System.Threading.CancellationToken.None);
+    }
+
+
+    public async Task<RefundResponse> CreateRefundAsync(RefundRequest request)
+    {
+        try
+        {
+            var refundService = new RefundService(_stripeClient);
+
+            var options = new RefundCreateOptions
+            {
+                PaymentIntent = request.PaymentIntentId,
+                Reason = request.Reason ?? "requested_by_customer"
+            };
+
+            if (request.AmountInCents.HasValue)
+            {
+                options.Amount = request.AmountInCents.Value;
+            }
+
+            if (request.Metadata != null)
+            {
+                options.Metadata = request.Metadata;
+            }
+
+            var refund = await refundService.CreateAsync(options);
+
+            _logger.LogInformation("Stripe refund created: {RefundId} for PaymentIntent: {PaymentIntentId}, Amount: {Amount}",
+                refund.Id, refund.PaymentIntentId, refund.Amount);
+
+            return new RefundResponse
+            {
+                RefundId = refund.Id,
+                PaymentIntentId = refund.PaymentIntentId,
+                Amount = refund.Amount,
+                Currency = refund.Currency,
+                Status = refund.Status,
+                Reason = refund.Reason
+            };
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe API error creating refund for PaymentIntent {PaymentIntentId}: {Message}",
+                request.PaymentIntentId, ex.Message);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error creating refund for PaymentIntent {PaymentIntentId}: {Message}",
+                request.PaymentIntentId, ex.Message);
+            throw;
+        }
+    }
+
+    public async Task<TransferReversalResponse> ReverseTransferAsync(ReverseTransferRequest request)
+    {
+        try
+        {
+            var transferReversalService = new TransferReversalService(_stripeClient);
+
+            var options = new TransferReversalCreateOptions();
+
+            if (request.AmountInCents.HasValue)
+            {
+                options.Amount = request.AmountInCents.Value;
+            }
+
+            if (!string.IsNullOrEmpty(request.Description))
+            {
+                options.Description = request.Description;
+            }
+
+            var reversal = await transferReversalService.CreateAsync(request.TransferId, options);
+
+            _logger.LogInformation("Stripe transfer reversal created: {ReversalId} for Transfer: {TransferId}, Amount: {Amount}",
+                reversal.Id, request.TransferId, reversal.Amount);
+
+            return new TransferReversalResponse
+            {
+                ReversalId = reversal.Id,
+                TransferId = request.TransferId,
+                Amount = reversal.Amount,
+                Currency = reversal.Currency
+            };
+        }
+        catch (StripeException ex)
+        {
+            _logger.LogError(ex, "Stripe API error reversing transfer {TransferId}: {Message}",
+                request.TransferId, ex.Message);
+            throw;
+        }
+        catch (Exception ex)
+        {
+            _logger.LogError(ex, "Error reversing transfer {TransferId}: {Message}",
+                request.TransferId, ex.Message);
+            throw;
+        }
+    }
 
     #region Helper Methods
 
@@ -846,6 +1031,26 @@ public class StripeService : IStripeService
         }
 
         return true;
+    }
+
+    private async Task<PaymentIntent> CreatePaymentIntentWithRetryAsync(
+        PaymentIntentService paymentIntentService,
+        PaymentIntentCreateOptions options)
+    {
+        try
+        {
+            return await paymentIntentService.CreateAsync(options);
+        }
+        catch (StripeException ex) when (
+            ex.HttpStatusCode == System.Net.HttpStatusCode.RequestTimeout ||
+            ex.Message.Contains("timeout") ||
+            ex.Message.Contains("connection") ||
+            ex.StripeError?.Type == "api_connection_error")
+        {
+            _logger.LogWarning("Stripe timeout/connection error, retrying once: {Message}", ex.Message);
+            await Task.Delay(1000);
+            return await paymentIntentService.CreateAsync(options);
+        }
     }
 
     #endregion

@@ -13,5 +13,9 @@ namespace Core.Application.Interfaces
         Task SendOrderCountdownExpiredEmailAsync(Order order, OrderProductAffiliate orderItem);
         Task SendOrderRefundedEmailAsync(Order order, OrderProductAffiliate orderItem, decimal refundAmount);
         Task SendOrderReorderedEmailAsync(Order order, OrderProductAffiliate orderItem);
+        Task SendRefundRequestToSellerAsync(Order order, OrderProductAffiliate orderItem, decimal refundAmount);
+        Task SendRefundRejectedToBuyerAsync(Order order, OrderProductAffiliate orderItem, string sellerReason);
+        Task SendRefundDisputedToAdminAsync(RefundDispute refundDispute);
+        Task SendRefundResolvedToBuyerAsync(Order order, OrderProductAffiliate orderItem, bool approved, string adminNotes);
     }
 }

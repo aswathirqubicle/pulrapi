@@ -45,6 +45,16 @@ public class GetSearchResultsQueryHandler : IRequestHandler<GetSearchResultsQuer
 
             var cUser = await _currentUserService.GetUserAsync();
 
+            var myProfileUid = cUser?.Profile?.Uid;
+            var blockedProfileIds = new List<string>();
+            if (myProfileUid != null)
+            {
+                blockedProfileIds = await _dbContext.UserBlocks
+                    .Where(ub => (ub.BlockerProfileId == myProfileUid || ub.BlockedProfileId == myProfileUid) && ub.IsActive)
+                    .Select(ub => ub.BlockerProfileId == myProfileUid ? ub.BlockedProfileId : ub.BlockerProfileId)
+                    .ToListAsync(cancellationToken);
+            }
+
             var postsQuery = _dbContext.Posts
                 .Where(p => p.IsActive
                             && !p.User.IsSuspended
@@ -68,6 +78,7 @@ public class GetSearchResultsQueryHandler : IRequestHandler<GetSearchResultsQuer
             }
 
             searchResult.Posts = await postsQuery
+                .Where(p => !blockedProfileIds.Contains(p.User.Profile.Uid))
                 .Select(p =>
                     new BaseSearchResult
                     {
@@ -100,16 +111,6 @@ public class GetSearchResultsQueryHandler : IRequestHandler<GetSearchResultsQuer
                         CountryCode = p.Country != null ? p.Country.Iso3 : null,
                         CurrencyCode = p.Country != null ? p.Country.Iso4 : null
                     }).Take(request.ResultCount).ToListAsync(cancellationToken);
-
-            var myProfileUid = cUser?.Profile?.Uid;
-            var blockedProfileIds = new List<string>();
-            if (myProfileUid != null)
-            {
-                blockedProfileIds = await _dbContext.UserBlocks
-                    .Where(ub => (ub.BlockerProfileId == myProfileUid || ub.BlockedProfileId == myProfileUid) && ub.IsActive)
-                    .Select(ub => ub.BlockerProfileId == myProfileUid ? ub.BlockedProfileId : ub.BlockerProfileId)
-                    .ToListAsync(cancellationToken);
-            }
 
             searchResult.Profiles = await _dbContext.Profiles
                 .Where(p => !p.User.IsSuspended

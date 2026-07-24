@@ -37,7 +37,7 @@ public interface IOrderService
     /// Updates the status of multiple order items (mark as shipped).
     /// Automatically updates the parent order status based on all items' statuses.
     /// </summary>
-    Task<bool> UpdateOrderItemsStatusAsync(string sellerUserId, List<string> itemUids, string trackingNumber, string shippingProvider, CancellationToken cancellationToken);
+    Task<bool> UpdateOrderItemsStatusAsync(string sellerUserId, List<string> itemUids, string trackingNumber, string shippingProvider, List<int> shippingProofMediaFileIds, CancellationToken cancellationToken);
 
     /// <summary>
     /// Confirms delivery of multiple order items.
