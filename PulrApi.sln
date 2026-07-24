@@ -17,6 +17,8 @@ Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dashboard.Application", "Da
 EndProject
 Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Dashboard.Infrastructure", "Dashboard.Infrastructure\Dashboard.Infrastructure.csproj", "{B27065CC-FF5C-4960-9D01-B907AAD2D6BB}"
 EndProject
+Project("{FAE04EC0-301F-11D3-BF4B-00C04F79EFBC}") = "Pulr.Contracts", "Contracts\Pulr.Contracts.csproj", "{939A25E8-6F4B-419C-B39C-CD8974980257}"
+EndProject
 Global
 	GlobalSection(SolutionConfigurationPlatforms) = preSolution
 		Debug|Any CPU = Debug|Any CPU
@@ -51,6 +53,10 @@ Global
 		{B27065CC-FF5C-4960-9D01-B907AAD2D6BB}.Debug|Any CPU.Build.0 = Debug|Any CPU
 		{B27065CC-FF5C-4960-9D01-B907AAD2D6BB}.Release|Any CPU.ActiveCfg = Release|Any CPU
 		{B27065CC-FF5C-4960-9D01-B907AAD2D6BB}.Release|Any CPU.Build.0 = Release|Any CPU
+		{939A25E8-6F4B-419C-B39C-CD8974980257}.Debug|Any CPU.ActiveCfg = Debug|Any CPU
+		{939A25E8-6F4B-419C-B39C-CD8974980257}.Debug|Any CPU.Build.0 = Debug|Any CPU
+		{939A25E8-6F4B-419C-B39C-CD8974980257}.Release|Any CPU.ActiveCfg = Release|Any CPU
+		{939A25E8-6F4B-419C-B39C-CD8974980257}.Release|Any CPU.Build.0 = Release|Any CPU
 	EndGlobalSection
 	GlobalSection(SolutionProperties) = preSolution
 		HideSolutionNode = FALSE
